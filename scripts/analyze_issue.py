@@ -4,7 +4,8 @@ import requests
 
 def analyze_issue():
     # Get environment variables
-    api_key = os.environ["DEEPSEEK_API_KEY"]  # 更改为 DeepSeek API 密钥
+    # api_key = os.environ["DEEPSEEK_API_KEY"]  # 更改为 DeepSeek API 密钥
+    api_key = "sk-bee7b24444af4601ae5cfd7811ec02fc"
     github_token = os.environ["GITHUB_TOKEN"]
     issue_number = os.environ["ISSUE_NUMBER"]
     issue_title = os.environ["ISSUE_TITLE"]
