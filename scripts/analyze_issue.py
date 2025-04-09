@@ -40,6 +40,8 @@ def analyze_issue():
     
     # 解析响应
     response_data = deepseek_response.json()
+    print("API 响应内容:")
+    print(json.dumps(response_data, indent=2, ensure_ascii=False))
     result = json.loads(response_data["choices"][0]["message"]["content"])
     
     # 以下代码保持不变
