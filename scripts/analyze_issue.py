@@ -1,24 +1,34 @@
 import os
 import json
 import requests
-from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-from autogen_ext.models.openai import AzureOpenAIChatCompletionClient
+from azure.identity import DefaultAzureCredential
+from langchain_openai import AzureChatOpenAI
+from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.output_parsers import JsonOutputParser
 
 class AzureChatOpenAIError(Exception):
+    """Exception raised for errors in Azure OpenAI chat operations."""
     pass
 
-def get_azure_chat_client(model_id="gpt-4o") -> AzureOpenAIChatCompletionClient:
+def get_azure_ad_token():
+    """Returns a function that gets an Azure AD token."""
+    credential = DefaultAzureCredential()
+    # This returns the token when called by the LangChain internals
+    return lambda: credential.get_token("https://cognitiveservices.azure.com/.default").token
+
+def get_azure_chat_model(model_id="gpt-4o"):
+    """Get a configured Azure OpenAI chat model through LangChain."""
     try:
-        token_provider = get_bearer_token_provider(
-            DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"
-        )
-        return AzureOpenAIChatCompletionClient(
-            azure_ad_token_provider=token_provider,
-            api_version="2024-05-13",
+        # Create Azure OpenAI chat model with Azure AD authentication
+        chat_model = AzureChatOpenAI(
+            deployment_name=model_id,
+            api_version="2025-01-01-preview",
             azure_endpoint="https://officegithubcopilotextsubdomain.openai.azure.com/",
-            azure_deployment=model_id,
-            model=model_id,
+            azure_ad_token_provider=get_azure_ad_token(),
+            temperature=0,  # Use deterministic output for analysis
+            response_format={"type": "json_object"}  # Ensure JSON output
         )
+        return chat_model
     except Exception as e:
         raise AzureChatOpenAIError(e) from e
 
@@ -31,32 +41,30 @@ def analyze_issue():
     repo_owner = os.environ["REPO_OWNER"] 
     repo_name = os.environ["REPO_NAME"].split("/")[-1]
     
-    # 指定要使用的 Azure 模型
-    model_id = "gpt-4o"  # 根据您的 Azure 部署修改
-
+    # Specify the Azure model to use
+    model_id = "gpt-4o"  # Modify according to your Azure deployment
+    
     # Prepare issue content for analysis
     issue_content = f"Issue Title: {issue_title}\n\nIssue Description: {issue_body}"
 
     try:
-        # 获取 Azure OpenAI 客户端
-        client = get_azure_chat_client(model_id)
+        # Get LangChain model interface
+        chat_model = get_azure_chat_model(model_id)
         
-        # 使用 Azure OpenAI 调用模型进行分析
-        response = client.create(
-            messages=[
-                {"role": "system", "content": "You are an expert at analyzing software issues. Your task is to determine if an issue is a regression. A regression is a bug where functionality that previously worked no longer works due to a recent change. Analyze the issue carefully and provide a JSON response."},
-                {"role": "user", "content": f"Analyze the following issue and determine if it's a regression issue. Response must be JSON with a 'is_regression' boolean and a 'reason' string.\n\n{issue_content}"}
-            ],
-            response_format={"type": "json_object"}
-        )
+        # Define system and user messages
+        system_message = SystemMessage(content="You are an expert at analyzing software issues. Your task is to determine if an issue is a regression. A regression is a bug where functionality that previously worked no longer works due to a recent change. Analyze the issue carefully and provide a JSON response.")
+        user_message = HumanMessage(content=f"Analyze the following issue and determine if it's a regression issue. Response must be JSON with a 'is_regression' boolean and a 'reason' string.\n\n{issue_content}")
         
-        # 解析响应
-        response_data = response.model_dump()
+        # Call the model
+        response = chat_model.invoke([system_message, user_message])
+        
+        # Parse the JSON response
+        content = response.content
         print("API 响应内容:")
-        print(json.dumps(response_data, indent=2, ensure_ascii=False))
+        print(content)
         
-        # 提取结果内容
-        result = json.loads(response_data["choices"][0]["message"]["content"])
+        # Extract the result
+        result = json.loads(content)
         
         # Add labels based on analysis
         if result["is_regression"]:
