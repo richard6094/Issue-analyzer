@@ -4,6 +4,7 @@ import requests
 from azure.identity import DefaultAzureCredential
 from langchain_openai import AzureChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 
 class AzureChatOpenAIError(Exception):
