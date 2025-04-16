@@ -42,29 +42,33 @@ def analyze_issue():
     repo_name = os.environ["REPO_NAME"].split("/")[-1]
     
     # Specify the Azure model to use
-    model_id = "gpt-4o"  # Modify according to your Azure deployment
+    model_id = "gpt-4o"
     
     # Prepare issue content for analysis
     issue_content = f"Issue Title: {issue_title}\n\nIssue Description: {issue_body}"
 
     try:
-        # Get LangChain model interface
+        # Get LangChain model
         chat_model = get_azure_chat_model(model_id)
         
-        # Define system and user messages
-        system_message = SystemMessage(content="You are an expert at analyzing software issues. Your task is to determine if an issue is a regression. A regression is a bug where functionality that previously worked no longer works due to a recent change. Analyze the issue carefully and provide a JSON response.")
-        user_message = HumanMessage(content=f"Analyze the following issue and determine if it's a regression issue. Response must be JSON with a 'is_regression' boolean and a 'reason' string.\n\n{issue_content}")
+        # Create parser to handle JSON output
+        parser = JsonOutputParser()
         
-        # Call the model
-        response = chat_model.invoke([system_message, user_message])
+        # Create prompt template
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", "You are an expert at analyzing software issues. Your task is to determine if an issue is a regression. A regression is a bug where functionality that previously worked no longer works due to a recent change. Analyze the issue carefully and provide a JSON response."),
+            ("human", "Analyze the following issue and determine if it's a regression issue. Response must be JSON with a 'is_regression' boolean and a 'reason' string.\n\n{issue}")
+        ])
         
-        # Parse the JSON response
-        content = response.content
+        # Create chain: prompt -> model -> parser
+        chain = prompt | chat_model | parser
+        
+        # Execute the chain with issue content
+        result = chain.invoke({"issue": issue_content})
+        
+        # Print response
         print("API 响应内容:")
-        print(content)
-        
-        # Extract the result
-        result = json.loads(content)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
         
         # Add labels based on analysis
         if result["is_regression"]:
@@ -94,6 +98,7 @@ def analyze_issue():
     except Exception as e:
         print(f"Error occurred: {str(e)}")
         raise
+              
 
 if __name__ == "__main__":
     analyze_issue()
