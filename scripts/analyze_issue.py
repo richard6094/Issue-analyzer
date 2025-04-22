@@ -33,22 +33,79 @@ def get_azure_chat_model(model_id="gpt-4o"):
     except Exception as e:
         raise AzureChatOpenAIError(e) from e
 
-def analyze_single_issue(issue_data, repo_owner, repo_name, github_token, chat_model, parser, prompt):
-    """Analyze a single issue and apply labels if needed."""
+def get_issue_comments(repo_owner, repo_name, issue_number, github_token):
+    """Get all comments for a specific issue."""
+    comments_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/issues/{issue_number}/comments"
+    headers = {
+        "Authorization": f"token {github_token}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    
+    response = requests.get(comments_url, headers=headers)
+    
+    if response.status_code == 200:
+        comments = response.json()
+        print(f"Retrieved {len(comments)} comments for issue #{issue_number}")
+        return comments
+    else:
+        print(f"Error fetching comments: {response.status_code}")
+        print(response.text)
+        return []
+
+def analyze_single_issue(issue_data, repo_owner, repo_name, github_token, chat_model, parser, prompt, include_comments=False):
+    """
+    Analyze a single issue and apply labels if needed.
+    
+    Args:
+        issue_data: The issue data from GitHub API
+        repo_owner: Repository owner
+        repo_name: Repository name
+        github_token: GitHub API token
+        chat_model: LangChain model for analysis
+        parser: Output parser
+        prompt: Analysis prompt template
+        include_comments: Whether to include comments in the analysis
+        
+    Returns:
+        bool: True if the issue is a regression, False otherwise
+    """
     issue_number = issue_data["number"]
     issue_title = issue_data["title"]
     issue_body = issue_data["body"] or ""
     
-    # Skip issues that already have labels (optional)
-    if issue_data["labels"]:
+    # Check if issue already has regression label
+    has_regression_label = False
+    for label in issue_data["labels"]:
+        if isinstance(label, dict) and label.get("name") == "regression":
+            has_regression_label = True
+            break
+        elif isinstance(label, str) and label == "regression":
+            has_regression_label = True
+            break
+    
+    if has_regression_label:
+        print(f"Skipping issue #{issue_number} as it already has regression label.")
+        return False
+    
+    # Skip issues with other labels only when not analyzing comments
+    if issue_data["labels"] and not include_comments:
         print(f"Skipping issue #{issue_number} as it already has labels.")
-        return
+        return False
         
     print(f"\nProcessing issue #{issue_number}: {issue_title}")
     print(f"Body length: {len(issue_body)} characters")
     
     # Prepare issue content for analysis
     issue_content = f"Issue Title: {issue_title}\n\nIssue Description: {issue_body}"
+    
+    # Include comments if requested
+    if include_comments:
+        print(f"Including comments in analysis for issue #{issue_number}")
+        comments = get_issue_comments(repo_owner, repo_name, issue_number, github_token)
+        if comments:
+            comments_text = "\n\n".join([f"Comment by {comment['user']['login']}: {comment['body']}" for comment in comments])
+            issue_content += f"\n\nComments:\n{comments_text}"
+            print(f"Added {len(comments)} comments to analysis")
     
     try:
         # Execute the chain with issue content
@@ -73,16 +130,21 @@ def analyze_single_issue(issue_data, repo_owner, repo_name, github_token, chat_m
                 print(f"Successfully added 'regression' label to issue #{issue_number}")
                 # Add a comment explaining the label
                 comment_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/issues/{issue_number}/comments"
-                comment_data = {"body": f"This issue was automatically labeled as a regression based on LLM analysis.\n\nReason: {result['reason']}"}
+                source = "issue content and comments" if include_comments else "issue content"
+                comment_data = {"body": f"This issue was automatically labeled as a regression based on LLM analysis of the {source}.\n\nReason: {result['reason']}"}
                 requests.post(comment_url, headers=headers, json=comment_data)
             else:
                 print(f"Failed to add label. Status code: {response.status_code}")
+            
+            return True
         else:
             print(f"Issue #{issue_number} is not identified as a regression.")
+            return False
             
     except Exception as e:
         print(f"Error processing issue #{issue_number}: {str(e)}")
-
+        return False
+        
 def analyze_issues():
     """Process all issues in the repository."""
     try:
@@ -90,6 +152,10 @@ def analyze_issues():
         github_token = os.environ["GITHUB_TOKEN"]
         repo_full_name = os.environ["GITHUB_REPOSITORY"]
         repo_owner, repo_name = repo_full_name.split("/")
+        
+        # Determine event type from environment variable or event file
+        event_name = os.environ.get("GITHUB_EVENT_NAME", "")
+        is_comment_event = event_name == "issue_comment"
         
         # Check for specific issue number
         specific_issue = os.environ.get("ISSUE_NUMBER")
@@ -99,7 +165,7 @@ def analyze_issues():
         chat_model = get_azure_chat_model(model_id)
         parser = JsonOutputParser()
         prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are an expert at analyzing software issues. Your task is to determine if an issue is a regression. A regression is a bug where functionality that previously worked no longer works due to a recent change. Analyze the issue carefully and provide a JSON response."),
+            ("system", "You are an expert at analyzing software issues. Your task is to determine if an issue is a regression. A regression is a bug where functionality that previously worked no longer works due to a recent change. Analyze the issue carefully, including any comments that might provide additional context. Provide a JSON response."),
             ("human", "Analyze the following issue and determine if it's a regression issue. Response must be JSON with a 'is_regression' boolean and a 'reason' string.\n\n{issue}")
         ])
         
@@ -114,7 +180,16 @@ def analyze_issues():
             
             if response.status_code == 200:
                 issue_data = response.json()
-                analyze_single_issue(issue_data, repo_owner, repo_name, github_token, chat_model, parser, prompt)
+                analyze_single_issue(
+                    issue_data, 
+                    repo_owner, 
+                    repo_name, 
+                    github_token, 
+                    chat_model, 
+                    parser, 
+                    prompt,
+                    include_comments=is_comment_event
+                )
             else:
                 print(f"Error fetching specific issue: {response.status_code}")
                 print(response.text)

@@ -3,18 +3,23 @@ name: LLM Issue Analyzer
 on:
   issues:
     types: [opened, edited]
+  issue_comment:
+    types: [created]
   workflow_dispatch:
 
 jobs:
   analyze_issues:
     runs-on: ubuntu-latest
-    # Only run on issues without labels or when manually triggered
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'opened') || (github.event_name == 'issues' && github.event.action == 'edited' && toJSON(github.event.issue.labels) == '[]')
+    # Modified condition to include comment events
+    if: github.event_name == 'workflow_dispatch' || 
+        (github.event_name == 'issues' && github.event.action == 'opened') || 
+        (github.event_name == 'issues' && github.event.action == 'edited' && toJSON(github.event.issue.labels) == '[]') ||
+        (github.event_name == 'issue_comment' && github.event.action == 'created' && !contains(toJSON(github.event.issue.labels), 'regression'))
     
     permissions:
       issues: write
       contents: read
-      id-token: write  # 添加此权限用于 OIDC 身份验证
+      id-token: write
 
     steps:
       - name: Checkout repository
@@ -35,17 +40,15 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install azure-identity autogen-ext python-dotenv requests openai tiktoken
-          pip install langchain_openai
-          pip install langchain_core
+          pip install azure-identity requests
+          pip install langchain_openai langchain_core
 
       - name: Analyze issue with LLM
         id: analyze
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
-          ISSUE_TITLE: ${{ github.event.issue.title }}
-          ISSUE_BODY: ${{ github.event.issue.body }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          ISSUE_NUMBER: ${{ github.event_name == 'issue_comment' && github.event.issue.number || github.event.issue.number || '' }}
           REPO_OWNER: ${{ github.repository_owner }}
           REPO_NAME: ${{ github.repository }}
         run: |
