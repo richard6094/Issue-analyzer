@@ -33,6 +33,55 @@ def get_azure_chat_model(model_id="gpt-4o"):
     except Exception as e:
         raise AzureChatOpenAIError(e) from e
 
+def ensure_label_exists(repo_owner, repo_name, github_token, label_name, color, description=None):
+    """
+    Ensure a label exists with the specified color and description.
+    If the label doesn't exist, create it. If it exists but with different settings, update it.
+    """
+    # Check if label exists
+    url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/labels/{label_name}"
+    headers = {
+        "Authorization": f"token {github_token}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    
+    response = requests.get(url, headers=headers)
+    
+    # If label exists
+    if response.status_code == 200:
+        current_label = response.json()
+        # Check if we need to update
+        if current_label["color"] != color or (description and current_label.get("description") != description):
+            print(f"Updating label '{label_name}' with new color: {color}")
+            update_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/labels/{label_name}"
+            data = {"color": color}
+            if description:
+                data["description"] = description
+            
+            update_response = requests.patch(update_url, headers=headers, json=data)
+            return update_response.status_code == 200
+        return True
+    
+    # If label doesn't exist, create it
+    elif response.status_code == 404:
+        print(f"Creating label '{label_name}' with color: {color}")
+        create_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/labels"
+        data = {
+            "name": label_name,
+            "color": color
+        }
+        if description:
+            data["description"] = description
+            
+        create_response = requests.post(create_url, headers=headers, json=data)
+        return create_response.status_code == 201
+    
+    # Some other error
+    else:
+        print(f"Error checking label: {response.status_code}")
+        print(response.text)
+        return False
+
 def get_issue_comments(repo_owner, repo_name, issue_number, github_token):
     """Get all comments for a specific issue."""
     comments_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/issues/{issue_number}/comments"
@@ -153,6 +202,15 @@ def analyze_issues():
         repo_full_name = os.environ["GITHUB_REPOSITORY"]
         repo_owner, repo_name = repo_full_name.split("/")
         
+        ensure_label_exists(
+            repo_owner, 
+            repo_name, 
+            github_token, 
+            "regression", 
+            "d73a4a",  #Red color for regression
+            "Functionality that previously worked no longer works"
+        )
+
         # Determine event type from environment variable or event file
         event_name = os.environ.get("GITHUB_EVENT_NAME", "")
         is_comment_event = event_name == "issue_comment"
