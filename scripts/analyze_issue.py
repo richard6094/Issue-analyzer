@@ -137,9 +137,9 @@ def analyze_single_issue(issue_data, repo_owner, repo_name, github_token, chat_m
         return False
     
     # Skip issues with other labels only when not analyzing comments
-    if issue_data["labels"] and not include_comments:
-        print(f"Skipping issue #{issue_number} as it already has labels.")
-        return False
+    # if issue_data["labels"] and not include_comments:
+    #     print(f"Skipping issue #{issue_number} as it already has labels.")
+    #     return False
         
     print(f"\nProcessing issue #{issue_number}: {issue_title}")
     print(f"Body length: {len(issue_body)} characters")
