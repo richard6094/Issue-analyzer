@@ -135,11 +135,6 @@ def analyze_single_issue(issue_data, repo_owner, repo_name, github_token, chat_m
     if has_regression_label:
         print(f"Skipping issue #{issue_number} as it already has regression label.")
         return False
-    
-    # Skip issues with other labels only when not analyzing comments
-    # if issue_data["labels"] and not include_comments:
-    #     print(f"Skipping issue #{issue_number} as it already has labels.")
-    #     return False
         
     print(f"\nProcessing issue #{issue_number}: {issue_title}")
     print(f"Body length: {len(issue_body)} characters")
@@ -212,8 +207,8 @@ def analyze_issues():
         )
 
         # Determine event type from environment variable or event file
-        event_name = os.environ.get("GITHUB_EVENT_NAME", "")
-        is_comment_event = event_name == "issue_comment"
+        # event_name = os.environ.get("GITHUB_EVENT_NAME", "")
+        # is_comment_event = event_name == "issue_comment"
         
         # Check for specific issue number
         specific_issue = os.environ.get("ISSUE_NUMBER")
@@ -246,7 +241,7 @@ def analyze_issues():
                     chat_model, 
                     parser, 
                     prompt,
-                    include_comments=is_comment_event
+                    include_comments=True
                 )
             else:
                 print(f"Error fetching specific issue: {response.status_code}")

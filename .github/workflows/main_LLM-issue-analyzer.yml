@@ -2,9 +2,7 @@ name: LLM Issue Analyzer
 
 on:
   issues:
-    types: [opened, edited]
-  issue_comment:
-    types: [created]
+    types: [opened]
   workflow_dispatch:
 
 jobs:
@@ -12,9 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     # Modified condition to include comment events
     if: github.event_name == 'workflow_dispatch' || 
-        (github.event_name == 'issues' && github.event.action == 'opened') || 
-        (github.event_name == 'issues' && github.event.action == 'edited' && toJSON(github.event.issue.labels) == '[]') ||
-        (github.event_name == 'issue_comment' && github.event.action == 'created' && !contains(toJSON(github.event.issue.labels), 'regression'))
+        (github.event_name == 'issues' && github.event.action == 'opened')
     
     permissions:
       issues: write
