@@ -380,21 +380,21 @@ def analyze_single_issue(issue_data, repo_owner, repo_name, github_token, chat_m
             # Create a comment with interactive checklist for user input
             comment_body = f"""## Regression Analysis Needs Your Input
 
-                Our automated system analyzed this issue but couldn't determine with confidence if this is a regression bug.
+Our automated system analyzed this issue but couldn't determine with confidence if this is a regression bug.
 
-                A regression bug is when **functionality that previously worked properly no longer works** after a recent change.
+A regression bug is when **functionality that previously worked properly no longer works** after a recent change.
 
-                **Could you please confirm if this is a regression issue?**
+**Could you please confirm if this is a regression issue?**
 
-                - [ ] Yes, this is a regression (functionality that used to work no longer works)
-                - [ ] No, this is not a regression
+- [ ] Yes, this is a regression (functionality that used to work no longer works)
+- [ ] No, this is not a regression
 
-                Please check one of the options above. Your input will help us prioritize and categorize this issue correctly.
+Please check one of the options above. Your input will help us prioritize and categorize this issue correctly.
 
-                ---
-                *Technical details:*
-                {final_reason}
-                """
+---
+*Technical details:*
+{final_reason}
+"""
             
             comment_data = {"body": comment_body}
             response = requests.post(comment_url, headers=headers, json=comment_data)
