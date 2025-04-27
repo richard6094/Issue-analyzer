@@ -82,6 +82,60 @@ def ensure_label_exists(repo_owner, repo_name, github_token, label_name, color, 
         print(response.text)
         return False
 
+def is_outlook_exclusive_issue(issue_title, issue_body, chat_model):
+    """
+    Use LLM to determine if an issue is specifically related to Outlook and exclusive to it.
+    
+    Args:
+        issue_title: The title of the issue
+        issue_body: The body/description of the issue
+        chat_model: LangChain model for analysis
+        
+    Returns:
+        bool: True if the issue is Outlook-exclusive, False otherwise
+    """
+    # Prepare issue content
+    issue_content = f"Issue Title: {issue_title}\n\nIssue Description: {issue_body}"
+    
+    # Create a specific prompt for Outlook exclusivity detection
+    outlook_prompt = ChatPromptTemplate.from_messages([
+        ("system", """You are an expert at analyzing software issues. 
+        Your task is to determine if an issue is exclusively related to Microsoft Outlook.
+        An 'Outlook-exclusive issue' is a problem that:
+        1. Only occurs in Microsoft Outlook (desktop, web, or mobile)
+        2. Is specifically related to Outlook functionality or features
+        3. Not related to other Office 365 applications or services, like Word, Excel, etc.
+        
+        Provide a JSON response with your analysis."""),
+        ("human", """Analyze the following issue and determine if it's exclusively an Outlook-related issue.
+        Response must be JSON with:
+        - 'is_outlook_exclusive': boolean
+        - 'confidence': number between 0 and 1
+        - 'reason': string explaining your decision
+        
+        Issue content:
+        {issue}""")
+    ])
+    
+    try:
+        # Define parser for the expected output format
+        parser = JsonOutputParser()
+        
+        # Execute the analysis
+        result = outlook_prompt.pipe(chat_model).pipe(parser).invoke({"issue": issue_content})
+        
+        # Print result for debugging
+        print(f"Outlook exclusivity analysis result:")
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        
+        # Return true if the model identified this as an Outlook-exclusive issue with reasonable confidence
+        return result.get("is_outlook_exclusive", False) and result.get("confidence", 0) > 0.7
+        
+    except Exception as e:
+        print(f"Error in Outlook exclusivity detection: {str(e)}")
+        # Fall back to false in case of errors
+        return False
+
 def get_issue_comments(repo_owner, repo_name, issue_number, github_token):
     """Get all comments for a specific issue."""
     comments_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/issues/{issue_number}/comments"
@@ -134,6 +188,11 @@ def analyze_single_issue(issue_data, repo_owner, repo_name, github_token, chat_m
     
     if has_regression_label:
         print(f"Skipping issue #{issue_number} as it already has regression label.")
+        return False
+    
+    # Check if this is an Outlook-exclusive issue
+    if is_outlook_exclusive_issue(issue_title, issue_body, chat_model):
+        print(f"Skipping issue #{issue_number} as it's identified as an Outlook-exclusive problem")
         return False
         
     print(f"\nProcessing issue #{issue_number}: {issue_title}")
@@ -188,7 +247,7 @@ def analyze_single_issue(issue_data, repo_owner, repo_name, github_token, chat_m
     except Exception as e:
         print(f"Error processing issue #{issue_number}: {str(e)}")
         return False
-        
+       
 def analyze_issues():
     """Process all issues in the repository."""
     try:
