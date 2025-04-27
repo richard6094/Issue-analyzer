@@ -155,6 +155,132 @@ def get_issue_comments(repo_owner, repo_name, issue_number, github_token):
         print(response.text)
         return []
 
+def analyze_issue_for_regression(issue_content, issue_number, chat_model):
+    """
+    Analyze an issue for regression with dual-LLM verification.
+    
+    This function performs two independent analyses:
+    1. Initial analysis to determine if the issue is a regression
+    2. Verification analysis to confirm or challenge the initial result
+    
+    Args:
+        issue_content: The issue content (title, body, and optionally comments)
+        issue_number: Issue number for logging
+        chat_model: The primary LLM model instance
+        
+    Returns:
+        dict: Analysis result with final decision and reasoning
+    """
+    print(f"Starting dual-LLM regression analysis for issue #{issue_number}")
+    
+    try:
+        # Step 1: Initial Analysis
+        initial_prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are an expert at analyzing software issues. 
+            Your task is to determine if an issue is a regression. 
+            A regression is a bug where functionality that previously worked no longer works due to a recent change.
+            Analyze the issue carefully and provide a detailed explanation.
+            Provide a JSON response."""),
+            ("human", """Analyze the following issue and determine if it's a regression issue.
+            Response must be JSON with:
+            - 'is_regression': boolean
+            - 'confidence': number between 0 and 1
+            - 'reason': string explaining your decision
+            
+            Issue content:
+            {issue}""")
+        ])
+        
+        parser = JsonOutputParser()
+        initial_result = initial_prompt.pipe(chat_model).pipe(parser).invoke({"issue": issue_content})
+        
+        print(f"Initial analysis result for issue #{issue_number}:")
+        print(json.dumps(initial_result, ensure_ascii=False, indent=2))
+        
+        # Step 2: Verification with a second independent LLM instance
+        # Create a new model instance to ensure no context sharing
+        verification_model = get_azure_chat_model(model_id="gpt-4o")
+        
+        verification_prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are an expert at verifying software regression issues.
+            Your task is to provide a second opinion on whether an issue is a regression or not.
+            
+            A regression is a bug where functionality that previously worked properly no longer works due to a recent change.
+            
+            Your analysis must be completely independent. Be skeptical and thorough.
+            Classify the issue into one of three categories:
+            1. Confirmed regression: You're confident this is a regression bug
+            2. Confirmed not regression: You're confident this is NOT a regression bug
+            3. Uncertain: You cannot determine with confidence
+            """),
+            ("human", """Review this issue and determine if it's a regression issue.
+            
+            Response must be JSON with:
+            - 'verification_result': string, one of ["confirmed_regression", "confirmed_not_regression", "uncertain"]
+            - 'confidence': number between 0 and 1
+            - 'explanation': string explaining your reasoning
+            
+            Issue content:
+            {issue}""")
+        ])
+        
+        verification_result = verification_prompt.pipe(verification_model).pipe(parser).invoke({"issue": issue_content})
+        
+        print(f"Verification result for issue #{issue_number}:")
+        print(json.dumps(verification_result, ensure_ascii=False, indent=2))
+        
+        # Step 3: Determine final result based on both analyses
+        is_regression = initial_result.get("is_regression", False)
+        initial_confidence = initial_result.get("confidence", 0.5)
+        verification_status = verification_result.get("verification_result", "uncertain")
+        verification_confidence = verification_result.get("confidence", 0.5)
+        
+        # Final decision logic
+        if verification_status == "confirmed_regression" and is_regression:
+            # Both agree it's a regression
+            final_decision = "confirmed_regression"
+            confidence_level = (initial_confidence + verification_confidence) / 2
+            final_reason = f"Initial analysis: {initial_result.get('reason', 'N/A')}\n\nVerification: {verification_result.get('explanation', 'N/A')}"
+        elif verification_status == "confirmed_not_regression" and not is_regression:
+            # Both agree it's not a regression
+            final_decision = "confirmed_not_regression"
+            confidence_level = (initial_confidence + verification_confidence) / 2
+            final_reason = f"Initial analysis: {initial_result.get('reason', 'N/A')}\n\nVerification: {verification_result.get('explanation', 'N/A')}"
+        elif verification_status == "confirmed_regression" and not is_regression:
+            # Disagreement, but verification is confident it's a regression
+            final_decision = "confirmed_regression" if verification_confidence > 0.8 else "uncertain"
+            confidence_level = verification_confidence
+            final_reason = f"Verification confirmed this is a regression.\n\nVerification: {verification_result.get('explanation', 'N/A')}"
+        elif verification_status == "confirmed_not_regression" and is_regression:
+            # Disagreement, but verification is confident it's not a regression
+            final_decision = "confirmed_not_regression" if verification_confidence > 0.8 else "uncertain"
+            confidence_level = verification_confidence
+            final_reason = f"Verification confirmed this is not a regression.\n\nVerification: {verification_result.get('explanation', 'N/A')}"
+        else:
+            # Uncertain cases
+            final_decision = "uncertain"
+            confidence_level = min(initial_confidence, verification_confidence)
+            final_reason = "Analysis was inconclusive. The AI systems could not reach a confident agreement."
+        
+        return {
+            "decision": final_decision,
+            "confidence": confidence_level,
+            "reason": final_reason,
+            "initial_analysis": initial_result,
+            "verification": verification_result
+        }
+        
+    except Exception as e:
+        print(f"Error in regression analysis: {str(e)}")
+        # Return uncertain in case of errors
+        return {
+            "decision": "uncertain",
+            "confidence": 0,
+            "reason": f"Error during analysis: {str(e)}",
+            "initial_analysis": {},
+            "verification": {}
+        }
+
 def analyze_single_issue(issue_data, repo_owner, repo_name, github_token, chat_model, parser, prompt, include_comments=False):
     """
     Analyze a single issue and apply labels if needed.
@@ -166,7 +292,7 @@ def analyze_single_issue(issue_data, repo_owner, repo_name, github_token, chat_m
         github_token: GitHub API token
         chat_model: LangChain model for analysis
         parser: Output parser
-        prompt: Analysis prompt template
+        prompt: Analysis prompt template (no longer used with new implementation)
         include_comments: Whether to include comments in the analysis
         
     Returns:
@@ -211,21 +337,21 @@ def analyze_single_issue(issue_data, repo_owner, repo_name, github_token, chat_m
             print(f"Added {len(comments)} comments to analysis")
     
     try:
-        # Execute the chain with issue content
-        result = prompt.pipe(chat_model).pipe(parser).invoke({"issue": issue_content})
+        # Use the new integrated analysis module
+        analysis_result = analyze_issue_for_regression(issue_content, issue_number, chat_model)
+        final_decision = analysis_result["decision"]
+        final_reason = analysis_result["reason"]
         
-        # Print response
-        print(f"Analysis result for issue #{issue_number}:")
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        # Common headers for GitHub API calls
+        headers = {
+            "Authorization": f"token {github_token}",
+            "Accept": "application/vnd.github.v3+json"
+        }
         
-        # Add labels based on analysis
-        if result["is_regression"]:
-            # GitHub API to add labels to the issue
+        # Take action based on final decision
+        if final_decision == "confirmed_regression":
+            # Add regression label
             url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/issues/{issue_number}/labels"
-            headers = {
-                "Authorization": f"token {github_token}",
-                "Accept": "application/vnd.github.v3+json"
-            }
             data = {"labels": ["regression"]}
             response = requests.post(url, headers=headers, json=data)
             
@@ -234,20 +360,56 @@ def analyze_single_issue(issue_data, repo_owner, repo_name, github_token, chat_m
                 # Add a comment explaining the label
                 comment_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/issues/{issue_number}/comments"
                 source = "issue content and comments" if include_comments else "issue content"
-                comment_data = {"body": f"This issue was automatically labeled as a regression based on LLM analysis of the {source}.\n\nReason: {result['reason']}"}
+                comment_data = {"body": f"This issue was automatically labeled as a regression based on dual-LLM analysis of the {source}.\n\nReason: {final_reason}"}
                 requests.post(comment_url, headers=headers, json=comment_data)
+                return True
             else:
                 print(f"Failed to add label. Status code: {response.status_code}")
+                return False
+        
+        elif final_decision == "confirmed_not_regression":
+            print(f"Issue #{issue_number} is confirmed not to be a regression.")
+            return False
             
-            return True
-        else:
-            print(f"Issue #{issue_number} is not identified as a regression.")
+        else:  # final_decision == "uncertain"
+            # Add a comment asking for user confirmation with checklist
+            print(f"Issue #{issue_number} has uncertain regression status. Asking user for confirmation.")
+            
+            comment_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/issues/{issue_number}/comments"
+            
+            # Create a comment with interactive checklist for user input
+            comment_body = f"""## Regression Analysis Needs Your Input
+
+                Our automated system analyzed this issue but couldn't determine with confidence if this is a regression bug.
+
+                A regression bug is when **functionality that previously worked properly no longer works** after a recent change.
+
+                **Could you please confirm if this is a regression issue?**
+
+                - [ ] Yes, this is a regression (functionality that used to work no longer works)
+                - [ ] No, this is not a regression
+
+                Please check one of the options above. Your input will help us prioritize and categorize this issue correctly.
+
+                ---
+                *Technical details:*
+                {final_reason}
+                """
+            
+            comment_data = {"body": comment_body}
+            response = requests.post(comment_url, headers=headers, json=comment_data)
+            
+            if response.status_code == 201:
+                print(f"Successfully added user confirmation request to issue #{issue_number}")
+            else:
+                print(f"Failed to add comment. Status code: {response.status_code}")
+                
             return False
             
     except Exception as e:
         print(f"Error processing issue #{issue_number}: {str(e)}")
         return False
-       
+
 def analyze_issues():
     """Process all issues in the repository."""
     try:
@@ -264,22 +426,18 @@ def analyze_issues():
             "d73a4a",  #Red color for regression
             "Functionality that previously worked no longer works"
         )
-
-        # Determine event type from environment variable or event file
-        # event_name = os.environ.get("GITHUB_EVENT_NAME", "")
-        # is_comment_event = event_name == "issue_comment"
         
         # Check for specific issue number
         specific_issue = os.environ.get("ISSUE_NUMBER")
         
-        # Initialize model and parsing components
+        # Initialize model - we only need one model now
         model_id = "gpt-4o"
         chat_model = get_azure_chat_model(model_id)
+        
+        # These are no longer used directly in analyze_single_issue
+        # but keeping them for backward compatibility
         parser = JsonOutputParser()
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are an expert at analyzing software issues. Your task is to determine if an issue is a regression. A regression is a bug where functionality that previously worked no longer works due to a recent change. Analyze the issue carefully, including any comments that might provide additional context. Provide a JSON response."),
-            ("human", "Analyze the following issue and determine if it's a regression issue. Response must be JSON with a 'is_regression' boolean and a 'reason' string.\n\n{issue}")
-        ])
+        prompt = None
         
         # Process a specific issue if specified
         if specific_issue:
