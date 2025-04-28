@@ -391,7 +391,7 @@ A regression bug is when **functionality that previously worked properly no long
 
 **After selecting an option above, please click the button below to submit your choice:**
 
-[🔄 Submit My Answer](https://github.com/{repo_owner}/{repo_name}/actions/workflows/process_regression_feedback.yml/dispatch?issue={issue_number})
+[🔄 Submit My Answer](https://github.com/{repo_owner}/{repo_name}/actions/workflows/main_process_regression_feedback.yml/dispatch?issue={issue_number})
 
 > Note: Only 'Yes' responses will result in adding the regression label.
 
