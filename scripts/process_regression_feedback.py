@@ -52,19 +52,19 @@ def process_regression_feedback():
     else:
         print(f"Failed to add label. Status code: {label_response.status_code}")
     
-    # Update the original comment to lock the selection
+    # Update the original comment to lock the selection by replacing the checkbox with a green checkmark
     comment_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/issues/comments/{comment_id}"
     
-    # Replace the checkbox with a visual confirmation that can't be unchecked
+    # Replace the checkbox with a green checkmark and lock the selection
     updated_body = comment_body.replace(
         "- [x] Yes, confirm this is a regression issue", 
         "✅ **Confirmed as regression issue** _(selection locked)_"
     )
     
-    # Add a confirmation message
+    # Add a confirmation message to the note
     updated_body = updated_body.replace(
         "> Note: Once confirmed, the issue will be labeled as regression.", 
-        "> ✓ **Confirmed**: This issue has been labeled as a regression.\n> The issue has been processed and this selection is now locked."
+        "> ✅ **Confirmed**: This issue has been labeled as regression.\n> Your selection has been processed and locked."
     )
     
     update_data = {"body": updated_body}
