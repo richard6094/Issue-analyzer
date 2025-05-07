@@ -1,15 +1,13 @@
 name: Process Regression Feedback
 
 on:
-  workflow_dispatch:
-    inputs:
-      issue:
-        description: 'Issue number to process'
-        required: true
+  issue_comment:
+    types: [edited]
 
 jobs:
   process_feedback:
     runs-on: ubuntu-latest
+    if: contains(github.event.comment.body, '## Regression Analysis Needs Your Input') && contains(github.event.comment.body, '<!-- comment_id:')
     permissions:
       issues: write
       contents: read
@@ -31,5 +29,7 @@ jobs:
       - name: Process Regression Feedback
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ISSUE_NUMBER: ${{ github.event.inputs.issue }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: python scripts/process_regression_feedback.py

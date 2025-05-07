@@ -384,16 +384,15 @@ Our automated system analyzed this issue but couldn't determine with confidence 
 
 A regression bug is when **functionality that previously worked properly no longer works** after a recent change.
 
-**Could you please confirm if this is a regression issue?**
+**Please select ONE option below:**
 
 - [ ] Yes, this is a regression (functionality that used to work no longer works)
 - [ ] No, this is not a regression
 
-**After selecting an option above, please click the button below to submit your choice:**
-
-[🔄 Submit My Answer](https://github.com/{repo_owner}/{repo_name}/actions/workflows/main_process-regression-feedback.yml/dispatch?issue={issue_number})
+<!-- comment_id:{issue_number}:{repo_owner}:{repo_name} -->
 
 > Note: Only 'Yes' responses will result in adding the regression label.
+> After selecting your option, your choice will be automatically processed.
 
 ---
 *Technical details:*

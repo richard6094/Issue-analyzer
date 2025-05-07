@@ -1,17 +1,30 @@
 import os
+import re
 import requests
+import time
 
 def process_regression_feedback():
     """Process user feedback on regression analysis."""
     # Get environment variables
     github_token = os.environ["GITHUB_TOKEN"]
+    comment_id = os.environ["COMMENT_ID"]
+    comment_body = os.environ["COMMENT_BODY"]
     issue_number = os.environ["ISSUE_NUMBER"]
     
-    # Repository information
-    repo_full_name = os.environ["GITHUB_REPOSITORY"]
-    repo_owner, repo_name = repo_full_name.split("/")
-    
     print(f"Processing feedback for issue #{issue_number}")
+    
+    # Extract repository information from the comment body using regex
+    match = re.search(r'<!-- comment_id:(\d+):([^:]+):([^:]+) -->', comment_body)
+    if not match:
+        repo_full_name = os.environ["GITHUB_REPOSITORY"]
+        repo_owner, repo_name = repo_full_name.split("/")
+        print("Using environment variables for repository information")
+    else:
+        comment_issue_number = match.group(1)
+        repo_owner = match.group(2)
+        repo_name = match.group(3)
+    
+    print(f"Processing feedback for {repo_owner}/{repo_name} issue #{issue_number}")
     
     # API headers
     headers = {
@@ -19,47 +32,65 @@ def process_regression_feedback():
         "Accept": "application/vnd.github.v3+json"
     }
     
-    # Get issue comments to find our feedback request
-    comments_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/issues/{issue_number}/comments"
-    response = requests.get(comments_url, headers=headers)
-    
-    if response.status_code != 200:
-        print(f"Error fetching comments: {response.status_code}")
-        return
-    
-    comments = response.json()
-    
-    # Find our regression analysis comment
-    feedback_comment = None
-    for comment in comments:
-        if "## Regression Analysis Needs Your Input" in comment.get("body", ""):
-            feedback_comment = comment
-            break
-    
-    if not feedback_comment:
-        print("No regression analysis comment found.")
-        return
-    
-    comment_body = feedback_comment.get("body", "")
-    
-    # Check if a choice was made
+    # Check which options are selected
     yes_selected = "- [x] Yes, this is a regression" in comment_body
     no_selected = "- [x] No, this is not a regression" in comment_body
     
-    if not yes_selected and not no_selected:
-        # User clicked the button without making a selection
-        followup_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/issues/{issue_number}/comments"
-        followup_data = {
-            "body": "⚠️ **Please select either 'Yes' or 'No' option in the previous comment before submitting your answer.**"
-        }
-        requests.post(followup_url, headers=headers, json=followup_data)
+    # If both options are selected, keep the most recent one
+    if yes_selected and no_selected:
+        print("Both options are selected. Implementing single-select behavior.")
+        
+        # Get the comment history to determine which was selected last
+        comment_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/issues/comments/{comment_id}"
+        history_response = requests.get(comment_url, headers=headers)
+        
+        if history_response.status_code != 200:
+            print(f"Error fetching comment details: {history_response.status_code}")
+            return
+            
+        # The edited_at timestamp will help us determine which option was selected most recently
+        # Since we can't directly know which option was selected last, we'll use a heuristic:
+        # We'll look at the position of both checkboxes in the comment text.
+        # The checkbox that appears last in the comment (higher index) is likely the one that was checked most recently.
+        
+        yes_position = comment_body.find("- [x] Yes")
+        no_position = comment_body.find("- [x] No")
+        
+        # Determine which option was likely selected last (higher index = later in edit sequence)
+        if yes_position > no_position:
+            # The "Yes" option appears later in the text, so it was likely selected last
+            print("Deselecting 'No' option and keeping 'Yes' option")
+            updated_body = comment_body.replace("- [x] No", "- [ ] No")
+            keep_yes = True
+        else:
+            # The "No" option appears later in the text, so it was likely selected last
+            print("Deselecting 'Yes' option and keeping 'No' option")
+            updated_body = comment_body.replace("- [x] Yes", "- [ ] Yes")
+            keep_yes = False
+            
+        # Update the comment with the corrected selection
+        update_data = {"body": updated_body}
+        update_response = requests.patch(comment_url, headers=headers, json=update_data)
+        
+        if update_response.status_code == 200:
+            print("Successfully updated comment to implement single-select behavior")
+            # Update our local variables to reflect the change
+            yes_selected = keep_yes
+            no_selected = not keep_yes
+        else:
+            print(f"Failed to update comment. Status code: {update_response.status_code}")
+            return
+    
+    # If neither option is selected, do nothing
+    elif not yes_selected and not no_selected:
+        print("No option selected yet.")
         return
     
-    # Process the selection
+    # At this point, exactly one option is selected - process the selection
     if yes_selected:
         print(f"User confirmed issue #{issue_number} is a regression")
         
-        # Add regression label only
+        # Add regression label
         url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/issues/{issue_number}/labels"
         data = {"labels": ["regression"]}
         label_response = requests.post(url, headers=headers, json=data)
@@ -67,28 +98,41 @@ def process_regression_feedback():
         if label_response.status_code == 200:
             print(f"Successfully added 'regression' label to issue #{issue_number}")
         else:
-            print(f"Failed to add regression label. Status code: {label_response.status_code}")
-    else:
-        print(f"User confirmed issue #{issue_number} is NOT a regression - no label will be added")
+            print(f"Failed to add label. Status code: {label_response.status_code}")
     
     # Update the original comment to show it's been processed
-    comment_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/issues/comments/{feedback_comment['id']}"
+    comment_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/issues/comments/{comment_id}"
     
-    # Replace the submission button with a processed message
-    updated_comment = comment_body.replace(
-        "[🔄 Submit My Answer]", 
-        "✅ **Answer Submitted** *(response recorded)*"
+    # Disable further selection by replacing the unselected checkbox with plain text
+    updated_body = comment_body
+    if yes_selected:
+        # Keep Yes checked and remove No checkbox
+        if "- [ ] No" in updated_body:
+            updated_body = updated_body.replace("- [ ] No", "- No")
+        elif "- [x] No" in updated_body:  
+            updated_body = updated_body.replace("- [x] No", "- No")
+    else:  # no_selected
+        # Keep No checked and remove Yes checkbox
+        if "- [ ] Yes" in updated_body:
+            updated_body = updated_body.replace("- [ ] Yes", "- Yes")
+        elif "- [x] Yes" in updated_body:
+            updated_body = updated_body.replace("- [x] Yes", "- Yes")
+    
+    # Add a "processed" message to the note
+    updated_body = updated_body.replace(
+        "> Note: Only 'Yes' responses will result in adding the regression label.", 
+        "> ✅ **Selection recorded**: Your choice has been processed.\n> Note: Only 'Yes' responses will result in adding the regression label."
     )
     
-    update_data = {"body": updated_comment}
+    update_data = {"body": updated_body}
     update_response = requests.patch(comment_url, headers=headers, json=update_data)
     
     if update_response.status_code == 200:
-        print("Successfully updated comment to show response was recorded")
+        print("Successfully updated comment to show selection was processed")
     else:
         print(f"Failed to update comment. Status code: {update_response.status_code}")
     
-    # Add a simple thank you comment
+    # Add a confirmation comment
     thank_you_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/issues/{issue_number}/comments"
     if yes_selected:
         thank_you_data = {
@@ -96,7 +140,7 @@ def process_regression_feedback():
         }
     else:
         thank_you_data = {
-            "body": "Thank you for your feedback. No regression label has been applied to this issue."
+            "body": "Thank you for your feedback confirming this is not a regression issue."
         }
     requests.post(thank_you_url, headers=headers, json=thank_you_data)
 
