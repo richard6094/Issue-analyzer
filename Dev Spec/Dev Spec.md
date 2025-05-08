@@ -1,4 +1,5 @@
-# GitHub Issue Regression Analyzer
+# GitHub Issue Regression Analyzer: Dev Spec
+
 ## 1. Executive Summary
 
 The GitHub Issue Regression Analyzer is an automated system that leverages Large Language Models (LLMs) to analyze GitHub issues and identify potential regression bugs. The system employs a multi-stage analysis approach, including dual-LLM verification and optional user confirmation, to ensure high-quality categorization. When a regression is detected with high confidence, the system automatically applies a "regression" label and adds an explanatory comment. For uncertain cases, the system requests confirmation from users through an interactive comment.
@@ -34,7 +35,7 @@ This specification outlines the architecture, workflows, and implementation deta
 
 ### 2.3 System Flow Diagram
 
-<img src="Dev Spec/workflow.png" alt="High-level System Overview" width="900">
+<img src="workflow.png" alt="High-level System Overview" width="900">
 
 ## 3. Core Functionality
 
@@ -74,7 +75,7 @@ def analyze_issue_for_regression(issue_content, issue_number, chat_model):
 
 #### 3.1.3 Decision Logic Diagram
 
-<img src="Dev Spec/Decision_workflow.png" alt="Decision Logic" width="700">
+<img src="Decision_workflow.png" alt="Decision Logic" width="700">
 
 ### 3.2 User Feedback Mechanism
 
@@ -104,7 +105,7 @@ When a user selects the option:
 5. A confirmation comment is added to notify the user
 
 
-<img src="Dev Spec/UserProcess_workflow.png" alt="User Feedback Process" width="650">
+<img src="UserProcess_workflow.png" alt="User Feedback Process" width="650">
 
 ## 4. Implementation Details
 
