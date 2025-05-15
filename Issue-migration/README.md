@@ -107,6 +107,30 @@ Don't add migration source info to the migrated issues:
 python scripts/migrate_issues.py --source "OfficeDev/office-js" --target "YourOrg/your-repo" --token "YOUR_TOKEN" --no-migration-info
 ```
 
+### 10. Skip Issues with Specific Labels
+
+Skip issues that have certain labels (e.g., "duplicate" or "wontfix"):
+
+```bash
+python scripts/migrate_issues.py --source "OfficeDev/office-js" --token "YOUR_TOKEN" --skip-labels "Needs: attention :wave:,Similar-Issue,Possible-Solution" --output "filtered_issues.json" --save-only
+```
+
+### 11. Process Issues in Batches with Checkpoints
+
+Handle large repositories by processing issues in batches and saving checkpoints:
+
+```bash
+python scripts/migrate_issues.py --source "OfficeDev/office-js" --token "YOUR_TOKEN" --start 5000 --end 6000 --batch-size 100 --checkpoint --output "batched_issues.json" --save-only
+```
+
+### 12. Resume from a Checkpoint
+
+Resume processing from a previously saved checkpoint:
+
+```bash
+python scripts/migrate_issues.py --source "OfficeDev/office-js" --token "YOUR_TOKEN" --resume "batched_issues_checkpoint.json" --target "YourOrg/your-repo"
+```
+
 ## Parameters Reference
 
 | Parameter | Required | Description |
@@ -123,6 +147,10 @@ python scripts/migrate_issues.py --source "OfficeDev/office-js" --target "YourOr
 | `--input` | No | Path to load issues from a previously saved JSON file |
 | `--no-migration-info` | No | Flag to disable adding migration information to migrated issues |
 | `--save-only` | No | Flag to only save issues to file without migration |
+| `--batch-size` | No | Process issues in batches of this size to manage rate limits (default: 50) |
+| `--checkpoint` | No | Save checkpoint files after each batch |
+| `--resume` | No | Resume from a checkpoint file |
+| `--skip-labels` | No | Comma-separated list of labels to skip (e.g., 'bug,enhancement') |
 
 ## Notes and Best Practices
 
@@ -132,17 +160,22 @@ python scripts/migrate_issues.py --source "OfficeDev/office-js" --target "YourOr
 
 2. **Rate Limiting**:
    - GitHub API has rate limits. For large migrations, use authenticated requests (provided token)
-   - If hitting rate limits, the script will display the error message
+   - If hitting rate limits, the script will automatically wait for the rate limit to reset
 
 3. **Large Repositories**:
    - For repositories with many issues, use pagination parameters (`--start`, `--end`, `--recent`)
-   - Process issues in batches for very large repositories
+   - Process issues in batches using `--batch-size` parameter
+   - Use `--checkpoint` and `--resume` for very large repositories to save progress
 
-4. **File Management**:
+4. **Filtering Issues**:
+   - Use `--skip-labels` to exclude issues with specific labels
+   - Use `--state` to filter by issue state (open, closed, or all)
+
+5. **File Management**:
    - Save issues before migration using `--output` to have a backup
    - Use `--summary-output` for a more compact representation of issues
 
-5. **Migration Considerations**:
+6. **Migration Considerations**:
    - Migration preserves content, comments, labels, and open/closed status
    - User information is preserved as text references but not as GitHub user associations
    - Issue numbers will be different in the target repository
