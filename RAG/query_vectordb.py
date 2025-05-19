@@ -7,15 +7,17 @@ from pathlib import Path
 
 import chromadb
 from chromadb.utils import embedding_functions
-from chromadb.errors import NotFoundError  # Add proper error import
+from chromadb.errors import NotFoundError
 
-def format_search_result(result: Dict, index: int) -> str:
+def format_search_result(result: Dict, index: int, related_results: List[Dict] = None, full_related: bool = False) -> str:
     """
-    Format a single search result for display.
+    Format a single search result for display, including related chunks.
     
     Args:
-        result: Search result dictionary
+        result: Primary search result dictionary
         index: Result index
+        related_results: List of related result dictionaries
+        full_related: Whether to display full content of related chunks
         
     Returns:
         Formatted result string
@@ -23,7 +25,7 @@ def format_search_result(result: Dict, index: int) -> str:
     doc = result["document"]
     metadata = result["metadata"]
     
-    # Format the result
+    # Format the primary result
     formatted = f"--- Result {index+1} ---\n"
     formatted += f"Issue: #{metadata['issue_number']} - {metadata['issue_title']}\n"
     formatted += f"Type: {metadata['chunk_type']}\n"
@@ -40,6 +42,21 @@ def format_search_result(result: Dict, index: int) -> str:
     # Add text snippet (first 300 chars)
     text_preview = doc[:300] + "..." if len(doc) > 300 else doc
     formatted += f"\nContent: {text_preview}\n"
+    
+    # Add related chunks if available
+    if related_results and len(related_results) > 0:
+        formatted += f"\nRelated chunks ({len(related_results)}):\n"
+        for i, related in enumerate(related_results):
+            formatted += f"  - [{related['metadata']['chunk_type']}] "
+            
+            # Either show full content or truncated preview based on full_related parameter
+            if full_related:
+                # Display the full content with proper formatting
+                formatted += f"\n    {related['document'].replace('\n', '\n    ')}\n"
+            else:
+                # Show truncated preview
+                related_preview = related['document'][:150] + "..." if len(related['document']) > 150 else related['document']
+                formatted += f"{related_preview}\n"
     
     return formatted
 
@@ -83,7 +100,8 @@ def query_database(
     filters: Optional[Dict] = None,
     include_related: bool = True,
     use_openai: bool = False,
-    openai_api_key: Optional[str] = None
+    openai_api_key: Optional[str] = None,
+    include_all_issue_chunks: bool = False
 ) -> List[Dict[str, Any]]:
     """
     Query the vector database.
@@ -97,6 +115,7 @@ def query_database(
         include_related: Whether to include related chunks
         use_openai: Whether to use OpenAI embeddings
         openai_api_key: OpenAI API key
+        include_all_issue_chunks: Whether to include all chunks from the same issue
         
     Returns:
         List of result dictionaries
@@ -150,11 +169,14 @@ def query_database(
     # Apply filters if provided
     where = filters if filters else {}
     
+    # Request more results than needed to account for deduplication
+    query_n_results = n_results * 3
+    
     # Execute query
     try:
         results = collection.query(
             query_texts=[query],
-            n_results=n_results,
+            n_results=query_n_results,  # Request more results to account for deduplication
             where=where
         )
     except Exception as e:
@@ -164,16 +186,36 @@ def query_database(
     # If results are empty
     if len(results["documents"][0]) == 0:
         return []
+
+    # Format primary results first
+    formatted_results = []
+    for i in range(len(results["documents"][0])):
+        primary_result = {
+            "document": results["documents"][0][i],
+            "metadata": results["metadatas"][0][i],
+            "id": results["ids"][0][i],
+            "related_results": []  # Will store related chunks here
+        }
+        formatted_results.append(primary_result)
     
-    # Handle related chunks if requested
-    if include_related and results["ids"][0]:
-        # Extract related chunk IDs
-        related_ids = []
+    # Apply deduplication based on issue number
+    original_count = len(formatted_results)
+    formatted_results = deduplicate_results(formatted_results)
+    if len(formatted_results) < original_count:
+        print(f"Deduplication removed {original_count - len(formatted_results)} results from duplicate issues")
+    
+    # Limit to requested number of results
+    formatted_results = formatted_results[:n_results]
         
-        for i, metadata in enumerate(results["metadatas"][0]):
+    # Handle related chunks if requested
+    if include_related and formatted_results:
+        # Process each primary result to find related chunks
+        for result_idx, result in enumerate(formatted_results):
+            metadata = result["metadata"]
+            related_ids = []
+            
             # Parse related chunks from JSON string
             related_chunks = json.loads(metadata.get("related_chunks", "[]"))
-            
             for rel in related_chunks:
                 related_ids.append(rel["id"])
             
@@ -182,34 +224,80 @@ def query_database(
                 related_ids.append(metadata["previous_chunk_id"])
             if metadata.get("next_chunk_id"):
                 related_ids.append(metadata["next_chunk_id"])
-        
-        # Remove duplicates and already included results
-        related_ids = [rid for rid in list(set(related_ids)) if rid not in results["ids"][0]]
-        
-        # If we have related IDs, get them from the collection
-        if related_ids:
-            try:
-                related_results = collection.get(
-                    ids=related_ids
-                )
+            
+            # If include_all_issue_chunks is True, find all chunks from the same issue
+            if include_all_issue_chunks:
+                issue_number = metadata.get("issue_number")
+                if issue_number is not None:
+                    print(f"Retrieving all chunks for issue #{issue_number}")
+                    # Query for all chunks of this issue
+                    try:
+                        issue_chunks = collection.get(
+                            where={"issue_number": issue_number}
+                        )
+                        
+                        # Add all IDs to the related IDs list (except this chunk's ID)
+                        if "ids" in issue_chunks and issue_chunks["ids"]:
+                            current_id = result["id"]
+                            for chunk_id in issue_chunks["ids"]:
+                                if chunk_id != current_id:
+                                    related_ids.append(chunk_id)
+                            print(f"Found {len(issue_chunks['ids'])-1} additional chunks for issue #{issue_number}")
+                    except Exception as e:
+                        print(f"Error retrieving all chunks for issue #{issue_number}: {str(e)}")
                 
-                # Format the related results
-                for key in ["documents", "metadatas", "ids"]:
-                    if key in results and key in related_results:
-                        results[key][0].extend(related_results[key])
-            except Exception as e:
-                print(f"Error retrieving related chunks: {str(e)}")
-    
-    # Format results for return
-    formatted_results = []
-    for i in range(len(results["documents"][0])):
-        formatted_results.append({
-            "document": results["documents"][0][i],
-            "metadata": results["metadatas"][0][i],
-            "id": results["ids"][0][i]
-        })
+            # Remove duplicates
+            related_ids = list(set(related_ids))
+            
+            # If we have related IDs, get them from the collection
+            if related_ids:
+                try:
+                    related_results = collection.get(
+                        ids=related_ids
+                    )
+                    
+                    # Create related result objects and attach to parent result
+                    for j in range(len(related_results["documents"])):
+                        related_result = {
+                            "document": related_results["documents"][j],
+                            "metadata": related_results["metadatas"][j],
+                            "id": related_results["ids"][j]
+                        }
+                        formatted_results[result_idx]["related_results"].append(related_result)
+                except Exception as e:
+                    print(f"Error retrieving related chunks: {str(e)}")
     
     return formatted_results
+
+def deduplicate_results(results):
+    """
+    Deduplicate results based on issue number to ensure diversity.
+    Each result will be from a different issue.
+    
+    Args:
+        results: List of result dictionaries
+        
+    Returns:
+        List of deduplicated results
+    """
+    if not results:
+        return []
+    
+    deduplicated = []
+    seen_issue_numbers = set()
+    
+    for result in results:
+        issue_number = result["metadata"]["issue_number"]
+        
+        # Skip if we've already included this issue number
+        if issue_number in seen_issue_numbers:
+            continue
+        
+        # Add to deduplicated results and track the issue number
+        deduplicated.append(result)
+        seen_issue_numbers.add(issue_number)
+    
+    return deduplicated
 
 def main():
     """Main function for the query script"""
@@ -234,6 +322,10 @@ def main():
                       help="Filter by chunk type (e.g., error, solution, environment)")
     parser.add_argument("--no-related", action="store_true",
                       help="Don't include related chunks in results")
+    parser.add_argument("--full-related", action="store_true",
+                      help="Output full content of related chunks instead of truncated previews")
+    parser.add_argument("--include-all-issue-chunks", action="store_true",
+                      help="Include all chunks from the same issue in results")
     
     args = parser.parse_args()
     
@@ -255,7 +347,8 @@ def main():
         filters=filters,
         include_related=not args.no_related,
         use_openai=args.use_openai,
-        openai_api_key=args.openai_api_key
+        openai_api_key=args.openai_api_key,
+        include_all_issue_chunks=args.include_all_issue_chunks
     )
     
     # Display results
@@ -263,11 +356,21 @@ def main():
         print(f"\nNo results found matching query: '{args.query}'")
         return
     
-    print(f"\nFound {len(results)} results for query: '{args.query}'")
+    # Calculate total chunks (primary + related)
+    total_chunks = sum(1 + len(result.get("related_results", [])) for result in results)
+    primary_count = len(results)
+    
+    print(f"\nFound {primary_count} primary results for query: '{args.query}' (total chunks: {total_chunks})")
     print("=" * 80)
     
     for i, result in enumerate(results):
-        print(format_search_result(result, i))
+        # Format result with its related chunks integrated
+        if args.full_related:
+            # Output full content of related chunks
+            print(format_search_result(result, i, result.get("related_results", []), full_related=True))
+        else:
+            # Output truncated previews of related chunks
+            print(format_search_result(result, i, result.get("related_results", []), full_related=False))
         print("=" * 80)
 
 if __name__ == "__main__":

@@ -2,6 +2,9 @@ import os
 import json
 import uuid
 import argparse
+import threading
+import time
+from datetime import datetime
 from typing import Dict, List, Any, Optional, Tuple
 
 import chromadb
@@ -10,7 +13,240 @@ from chromadb.errors import NotFoundError
 from tqdm import tqdm
 import numpy as np
 
+# Add imports for Azure OpenAI integration
+from azure.identity import DefaultAzureCredential
+from langchain_openai import AzureChatOpenAI
+from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import JsonOutputParser
+
 from openai import OpenAI
+
+class ProgressTracker:
+    """
+    Track and display real-time progress during database creation.
+    """
+    def __init__(self, update_interval=5):
+        """
+        Initialize the progress tracker.
+        
+        Args:
+            update_interval: How often to update the display (in seconds)
+        """
+        self.start_time = time.time()
+        self.update_interval = update_interval
+        self.stop_event = threading.Event()
+        self.status = {
+            "total_issues": 0,
+            "processed_issues": 0,
+            "total_chunks": 0,
+            "success_chunks": 0,
+            "error_chunks": 0,
+            "current_stage": "Initializing",
+            "current_issue": None,
+            "eta": None,
+            "chunk_types": {},
+            "stage_times": {
+                "loading": 0,
+                "chunking": 0,
+                "embedding": 0,
+                "storing": 0
+            }
+        }
+        self.thread = None
+        # Flag to control initial display
+        self.first_update = True
+        # Flag to track if terminal supports ANSI escape codes
+        self.supports_ansi = True
+    
+    def start(self):
+        """Start the progress tracking thread."""
+        if self.thread is not None:
+            return
+        
+        # Detect terminal capabilities
+        self.supports_ansi = os.name == 'posix' or 'ANSICON' in os.environ or 'WT_SESSION' in os.environ
+        
+        # Add initial lines only once
+        if self.supports_ansi:
+            print("\n\n\n\n\n\n")
+            
+        self.thread = threading.Thread(target=self._update_display)
+        self.thread.daemon = True
+        self.thread.start()
+        print("Progress tracking started")
+    
+    def stop(self):
+        """Stop the progress tracking thread."""
+        if self.thread is None:
+            return
+            
+        self.stop_event.set()
+        self.thread.join()
+        self.thread = None
+        # Final display
+        self._display_progress()
+        print("\nProgress tracking stopped")
+    
+    def update_stage(self, stage_name, issue_number=None):
+        """Update the current processing stage."""
+        self.status["current_stage"] = stage_name
+        if issue_number is not None:
+            self.status["current_issue"] = issue_number
+    
+    def set_total_issues(self, count):
+        """Set the total number of issues to process."""
+        self.status["total_issues"] = count
+    
+    def increment_processed_issues(self):
+        """Increment the count of processed issues."""
+        self.status["processed_issues"] += 1
+        # Update ETA based on processed issues
+        if self.status["processed_issues"] > 0 and self.status["total_issues"] > 0:
+            elapsed = time.time() - self.start_time
+            issues_left = self.status["total_issues"] - self.status["processed_issues"]
+            time_per_issue = elapsed / self.status["processed_issues"]
+            eta_seconds = issues_left * time_per_issue
+            self.status["eta"] = eta_seconds
+    
+    def add_chunks(self, count, chunk_types=None):
+        """
+        Add to the total chunk count.
+        
+        Args:
+            count: Number of chunks to add
+            chunk_types: Dictionary of chunk types and their counts
+        """
+        self.status["total_chunks"] += count
+        
+        # Update chunk type distribution
+        if chunk_types:
+            for chunk_type, type_count in chunk_types.items():
+                if chunk_type in self.status["chunk_types"]:
+                    self.status["chunk_types"][chunk_type] += type_count
+                else:
+                    self.status["chunk_types"][chunk_type] = type_count
+    
+    def increment_success_chunks(self, count=1):
+        """Increment the count of successfully processed chunks."""
+        self.status["success_chunks"] += count
+    
+    def increment_error_chunks(self, count=1):
+        """Increment the count of chunks with errors."""
+        self.status["error_chunks"] += count
+    
+    def update_stage_time(self, stage, elapsed):
+        """Update the time spent in a processing stage."""
+        if stage in self.status["stage_times"]:
+            self.status["stage_times"][stage] += elapsed
+    
+    def _format_time(self, seconds):
+        """Format seconds into a readable time string."""
+        if seconds is None:
+            return "Unknown"
+            
+        hours, remainder = divmod(int(seconds), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        
+        if hours > 0:
+            return f"{hours}h {minutes}m {seconds}s"
+        elif minutes > 0:
+            return f"{minutes}m {seconds}s"
+        else:
+            return f"{seconds}s"
+    
+    def _display_progress(self):
+        """Display the current progress information."""
+        elapsed = time.time() - self.start_time
+        
+        # Choose display method based on terminal capabilities
+        if self.supports_ansi:
+            # Clear previous lines (6 lines for the header, status, progress info, and spacing)
+            print("\033[K\033[F" * 6, end="")
+            
+            # Print header
+            print("\033[K\033[1m===== Real-time Progress Report =====\033[0m")
+            
+            # Print current status
+            issue_info = f" (Issue #{self.status['current_issue']})" if self.status["current_issue"] else ""
+            print(f"\033[KStage: {self.status['current_stage']}{issue_info}")
+            
+            # Print issue progress
+            if self.status["total_issues"] > 0:
+                issue_percent = self.status["processed_issues"] / self.status["total_issues"] * 100
+                print(f"\033[KIssues: {self.status['processed_issues']} / {self.status['total_issues']} ({issue_percent:.1f}%)")
+            else:
+                print(f"\033[KIssues: {self.status['processed_issues']} processed")
+            
+            # Print chunk progress
+            if self.status["total_chunks"] > 0:
+                success_percent = self.status["success_chunks"] / self.status["total_chunks"] * 100
+                print(f"\033[KChunks: {self.status['success_chunks']} / {self.status['total_chunks']} ({success_percent:.1f}%) - {self.status['error_chunks']} errors")
+            else:
+                print(f"\033[KChunks: {self.status['success_chunks']} processed - {self.status['error_chunks']} errors")
+            
+            # Print timing information
+            eta_str = self._format_time(self.status["eta"]) if self.status["eta"] else "Calculating..."
+            print(f"\033[KTime: Elapsed {self._format_time(elapsed)} - ETA: {eta_str}")
+            
+            # Add an empty line for better visibility
+            print("")  # This empty line will be cleared on next update
+        else:
+            # For terminals that don't support ANSI escape codes, just print a new update
+            if self.first_update or (time.time() % 10) < 1:  # Limit full updates to every ~10 seconds
+                print("\n===== Real-time Progress Report =====")
+                issue_info = f" (Issue #{self.status['current_issue']})" if self.status["current_issue"] else ""
+                print(f"Stage: {self.status['current_stage']}{issue_info}")
+                
+                if self.status["total_issues"] > 0:
+                    issue_percent = self.status["processed_issues"] / self.status["total_issues"] * 100
+                    print(f"Issues: {self.status['processed_issues']} / {self.status['total_issues']} ({issue_percent:.1f}%)")
+                else:
+                    print(f"Issues: {self.status['processed_issues']} processed")
+                
+                if self.status["total_chunks"] > 0:
+                    success_percent = self.status["success_chunks"] / self.status["total_chunks"] * 100
+                    print(f"Chunks: {self.status['success_chunks']} / {self.status['total_chunks']} ({success_percent:.1f}%) - {self.status['error_chunks']} errors")
+                else:
+                    print(f"Chunks: {self.status['success_chunks']} processed - {self.status['error_chunks']} errors")
+                
+                eta_str = self._format_time(self.status["eta"]) if self.status["eta"] else "Calculating..."
+                print(f"Time: Elapsed {self._format_time(elapsed)} - ETA: {eta_str}\n")
+                
+        self.first_update = False
+    
+    def _update_display(self):
+        """Background thread to update the display periodically."""
+        # Don't add initial lines here, already added in start()
+        while not self.stop_event.is_set():
+            self._display_progress()
+            time.sleep(self.update_interval)
+
+class AzureChatOpenAIError(Exception):
+    """Exception raised for errors in Azure OpenAI chat operations."""
+    pass
+
+def get_azure_ad_token():
+    """Returns a function that gets an Azure AD token."""
+    credential = DefaultAzureCredential()
+    # This returns the token when called by the LangChain internals
+    return lambda: credential.get_token("https://cognitiveservices.azure.com/.default").token
+
+def get_azure_chat_model(model_id="gpt-4o"):
+    """Get a configured Azure OpenAI chat model through LangChain."""
+    try:
+        # Create Azure OpenAI chat model with Azure AD authentication
+        chat_model = AzureChatOpenAI(
+            deployment_name=model_id,
+            api_version="2025-01-01-preview",
+            azure_endpoint="https://officegithubcopilotextsubdomain.openai.azure.com/",
+            azure_ad_token_provider=get_azure_ad_token(),
+            temperature=0.2,  # Low temperature for more deterministic outputs
+            model_kwargs={"response_format": {"type": "json_object"}}  # Ensure JSON output
+        )
+        return chat_model
+    except Exception as e:
+        raise AzureChatOpenAIError(str(e)) from e
 
 class IssueVectorDatabase:
     """
@@ -203,7 +439,7 @@ class IssueVectorDatabase:
     
     def semantic_chunk_text(self, text: str, issue_number: int, issue_data: Dict) -> List[Dict]:
         """
-        Chunk text semantically considering boundaries between different parts.
+        Intelligently chunk text using LLM or pattern-based fallback.
         
         Args:
             text: Text to chunk
@@ -213,11 +449,8 @@ class IssueVectorDatabase:
         Returns:
             List of semantic chunks with metadata
         """
-        # Find semantic boundaries
-        boundaries = self.identify_semantic_boundaries(text)
-        
-        # If no boundaries or text is short enough, return as single chunk
-        if not boundaries or len(text) < self.max_tokens_per_chunk:
+        # If text is very short, just return as a single chunk
+        if len(text) < 500:
             chunk_type = self.identify_chunk_type(text)
             return [{
                 "text": text,
@@ -234,39 +467,19 @@ class IssueVectorDatabase:
                 }
             }]
         
-        # Add start and end positions
-        positions = [0] + boundaries + [len(text)]
-        positions = sorted(list(set(positions)))  # Remove duplicates and sort
+        # Use LLM segmentation for intelligent chunking
+        segments = self.llm_segment_text(text)
         
+        # Create properly formatted chunks with metadata
         chunks = []
-        for i in range(len(positions) - 1):
-            start = max(0, positions[i])
-            end = min(len(text), positions[i + 1])
-            
-            # Skip if chunk is too small
-            if end - start < 50:
-                continue
-            
-            # Extract the chunk text
-            chunk_text = text[start:end].strip()
-            
-            # Skip empty chunks
-            if not chunk_text:
-                continue
-            
-            # Generate a unique ID for this chunk
+        for i, segment in enumerate(segments):
             chunk_id = str(uuid.uuid4())
-            
-            # Identify the chunk type
-            chunk_type = self.identify_chunk_type(chunk_text)
-            
-            # Create chunk with metadata
             chunks.append({
-                "text": chunk_text,
+                "text": segment["text"],
                 "metadata": {
                     "issue_number": issue_number,
                     "issue_title": issue_data.get("title", ""),
-                    "chunk_type": chunk_type,
+                    "chunk_type": segment["type"],  # Use the type identified by LLM
                     "position": i,  # Position within the issue
                     "state": issue_data.get("state", ""),
                     "author": issue_data.get("author", ""),
@@ -397,39 +610,79 @@ class IssueVectorDatabase:
         """
         Process all issues, create semantic chunks, and add them to the vector database.
         """
-        # Load issues from file
+        # Initialize progress tracker
+        progress = ProgressTracker(update_interval=2)
+        progress.start()
+        progress.update_stage("Loading Issues", None)
+        
+        # Load issues from file - measure loading time
+        start_time = time.time()
         issues = self.load_issues()
+        loading_time = time.time() - start_time
+        progress.update_stage_time("loading", loading_time)
         
         # Track statistics
         total_chunks = 0
         all_chunks = []
         
+        # Set total issues for tracking
+        progress.set_total_issues(len(issues))
+        
         # Process each issue
-        for issue in tqdm(issues, desc="Processing issues"):
-            # Skip empty issues
-            if not issue:
-                continue
-                
+        for issue in issues:
             # Get issue number
             issue_number = issue.get("number", 0)
             
+            # Update progress to the current issue
+            progress.update_stage("Processing Issue", issue_number)
+            
+            # Skip empty issues
+            if not issue:
+                progress.increment_processed_issues()
+                continue
+            
             # Preprocess the issue
+            start_time = time.time()
             full_text = self.preprocess_issue(issue)
             if not full_text:
+                progress.increment_processed_issues()
                 continue
-                
-            # Break the issue into semantic chunks
-            chunks = self.semantic_chunk_text(full_text, issue_number, issue)
-            all_chunks.extend(chunks)
             
+            # Break the issue into semantic chunks
+            progress.update_stage("Semantic Chunking", issue_number)
+            chunks = self.semantic_chunk_text(full_text, issue_number, issue)
+            chunking_time = time.time() - start_time
+            progress.update_stage_time("chunking", chunking_time)
+            
+            # Add chunks to the total
+            all_chunks.extend(chunks)
             total_chunks += len(chunks)
+            
+            # Calculate chunk type distribution
+            chunk_types = {}
+            for chunk in chunks:
+                chunk_type = chunk["metadata"]["chunk_type"]
+                if chunk_type in chunk_types:
+                    chunk_types[chunk_type] += 1
+                else:
+                    chunk_types[chunk_type] = 1
+            
+            # Update progress with chunk information
+            progress.add_chunks(len(chunks), chunk_types)
+            
+            # Update processed count
+            progress.increment_processed_issues()
         
         # Find and establish relationships between chunks
-        print(f"Finding relationships between {len(all_chunks)} chunks...")
+        progress.update_stage("Finding Relationships", None)
+        start_time = time.time()
         all_chunks = self.find_related_chunks(all_chunks)
+        relationship_time = time.time() - start_time
+        progress.update_stage_time("embedding", relationship_time)
         
         # Add all chunks to ChromaDB
-        print(f"Adding {len(all_chunks)} chunks to ChromaDB...")
+        progress.update_stage("Storing in Database", None)
+        start_time = time.time()
         
         # Prepare data for batch insertion
         ids = []
@@ -442,21 +695,64 @@ class IssueVectorDatabase:
             documents.append(chunk["text"])
             metadatas.append(chunk["metadata"])
         
-        # Add to collection in batches of 100
+        # Add to collection in batches
         batch_size = 100
-        for i in tqdm(range(0, len(ids), batch_size), desc="Adding to database"):
-            batch_ids = ids[i:i+batch_size]
-            batch_docs = documents[i:i+batch_size]
-            batch_meta = metadatas[i:i+batch_size]
+        for i in range(0, len(ids), batch_size):
+            batch_end = min(i + batch_size, len(ids))
+            batch_ids = ids[i:batch_end]
+            batch_docs = documents[i:batch_end]
+            batch_meta = metadatas[i:batch_end]
             
-            self.collection.add(
-                ids=batch_ids,
-                documents=batch_docs,
-                metadatas=batch_meta
-            )
+            # Update progress
+            progress.update_stage(f"Adding Batch {i//batch_size + 1}/{(len(ids)-1)//batch_size + 1}", None)
+            
+            try:
+                # Try to add the batch
+                self.collection.add(
+                    ids=batch_ids,
+                    documents=batch_docs,
+                    metadatas=batch_meta
+                )
+                progress.increment_success_chunks(len(batch_ids))
+            except Exception as e:
+                print(f"Error adding batch to database: {str(e)}")
+                progress.increment_error_chunks(len(batch_ids))
         
-        print(f"Successfully added {total_chunks} semantic chunks to ChromaDB")
+        # Update storage time
+        storing_time = time.time() - start_time
+        progress.update_stage_time("storing", storing_time)
+        
+        # Final stage
+        progress.update_stage("Complete", None)
+        
+        # Stop the progress tracker and display final stats
+        progress.stop()
+        
+        print(f"\nSuccessfully added {progress.status['success_chunks']} semantic chunks to ChromaDB")
         print(f"Vector database is now available at {self.db_path}")
+        
+        # Display errors if any
+        if progress.status["error_chunks"] > 0:
+            print(f"Warning: {progress.status['error_chunks']} chunks failed to be added to the database")
+        
+        # Display time breakdown
+        print("\nTime Breakdown:")
+        total_time = sum(progress.status["stage_times"].values())
+        for stage, stage_time in progress.status["stage_times"].items():
+            percent = (stage_time / total_time) * 100 if total_time > 0 else 0
+            print(f"  {stage.capitalize()}: {self._format_time(stage_time)} ({percent:.1f}%)")
+        
+    def _format_time(self, seconds):
+        """Format seconds into a readable time string."""
+        hours, remainder = divmod(int(seconds), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        
+        if hours > 0:
+            return f"{hours}h {minutes}m {seconds}s"
+        elif minutes > 0:
+            return f"{minutes}m {seconds}s"
+        else:
+            return f"{seconds}s"
     
     def query(self, 
               query_text: str, 
@@ -524,6 +820,273 @@ class IssueVectorDatabase:
         
         return results
 
+    def llm_segment_text(self, text: str) -> List[Dict[str, Any]]:
+        """
+        Use LLM to segment text into semantically coherent blocks.
+        This is a more advanced approach than the pattern-based chunking.
+        
+        Args:
+            text: The full text to segment
+            
+        Returns:
+            List of dictionaries with segment info including text and type
+        """
+        # If the text is very short, return it as a single segment
+        if len(text) < 500:
+            return [{"text": text, "type": self.identify_chunk_type(text)}]
+            
+        try:
+            # Try to get Azure OpenAI model first
+            try:
+                # Get the Azure OpenAI chat model
+                chat_model = get_azure_chat_model(model_id="gpt-4o")
+                use_azure = True
+                print("Using Azure OpenAI for semantic segmentation")
+            except Exception as e:
+                print(f"Azure OpenAI initialization failed: {str(e)}")
+                # Fall back to regular OpenAI if Azure fails
+                use_azure = False
+                # Check if OpenAI API key is available
+                if not self.openai_api_key:
+                    raise ValueError("No OpenAI API key provided and Azure OpenAI initialization failed")
+                
+            # Prepare the system prompt for text segmentation
+            system_prompt = """You are an expert system for analyzing GitHub issues.
+Your task is to segment the given text into semantically coherent chunks, where each chunk:
+1. Contains complete thoughts or concepts that belong together
+2. Respects natural semantic boundaries like sections, code blocks, or topic changes
+3. Is meaningful on its own but preserves contextual information
+4. Has logical coherence within itself
+
+Consider these boundary points when creating segments:
+- Topic or subject changes
+- Transitions between problem descriptions and solutions
+- Boundaries between code blocks and explanatory text
+- Changes in who is speaking (different commenters)
+- Section headers or formatting changes
+
+For each segment, also identify its type from these categories:
+- description: General issue descriptions
+- error: Error messages or descriptions of problems
+- code: Code snippets or stack traces
+- solution: Proposed fixes or solutions
+- environment: Information about system environment/versions
+- reproduction_steps: Steps to reproduce an issue
+- expected_behavior: Description of expected behavior
+- current_behavior: Description of current problematic behavior
+- comment: User comments or feedback
+
+Return your response as a JSON object with a 'segments' array, where each element is an object with:
+- "text": The segment text
+- "type": The segment type from the categories above"""
+
+            # Prepare the complete prompt including the content
+            user_prompt = f"Segment the following GitHub issue text into semantically coherent chunks:\n\n{text}"
+            
+            if use_azure:
+                # Use Azure OpenAI via LangChain
+                # Create a chat prompt template
+                prompt = ChatPromptTemplate.from_messages([
+                    ("system", system_prompt),
+                    ("human", "{issue_text}")
+                ])
+                
+                # Set up the parser for JSON output
+                parser = JsonOutputParser()
+                
+                # Create the chain
+                chain = prompt | chat_model | parser
+                
+                # Execute the chain
+                result = chain.invoke({"issue_text": user_prompt})
+                
+            else:
+                # Fall back to direct OpenAI client if Azure isn't available
+                response = self.openai_client.chat.completions.create(
+                    model="gpt-4o",  # You can adjust this based on what's available
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0.2  # Keep it deterministic
+                )
+                
+                # Parse the response
+                result = json.loads(response.choices[0].message.content)
+            
+            # Return the segments if properly formatted
+            if "segments" in result and isinstance(result["segments"], list):
+                # Format validation and cleanup
+                valid_segments = []
+                for segment in result["segments"]:
+                    if "text" in segment and "type" in segment and segment["text"].strip():
+                        valid_segments.append({
+                            "text": segment["text"].strip(),
+                            "type": segment["type"].lower()
+                        })
+                
+                if valid_segments:
+                    print(f"LLM successfully segmented text into {len(valid_segments)} chunks")
+                    return valid_segments
+            
+            # Fallback to pattern-based chunking if result is malformed
+            print("Warning: LLM returned malformed response for text segmentation. Falling back to pattern-based chunking.")
+            return self.pattern_based_segment_text(text)
+            
+        except Exception as e:
+            print(f"Error using LLM for text segmentation: {str(e)}")
+            print("Falling back to pattern-based chunking.")
+            return self.pattern_based_segment_text(text)
+            
+    def pattern_based_segment_text(self, text: str) -> List[Dict[str, Any]]:
+        """
+        Legacy method using pattern matching to segment text.
+        This is used as a fallback when LLM segmentation fails.
+        
+        Args:
+            text: The text to segment
+            
+        Returns:
+            List of dictionaries with segment info
+        """
+        # Find semantic boundaries
+        boundaries = self.identify_semantic_boundaries(text)
+        
+        # If no boundaries or text is short enough, return as single chunk
+        if not boundaries or len(text) < self.max_tokens_per_chunk:
+            return [{
+                "text": text,
+                "type": self.identify_chunk_type(text)
+            }]
+        
+        # Add start and end positions
+        positions = [0] + boundaries + [len(text)]
+        positions = sorted(list(set(positions)))  # Remove duplicates and sort
+        
+        segments = []
+        for i in range(len(positions) - 1):
+            start = max(0, positions[i])
+            end = min(len(text), positions[i + 1])
+            
+            # Skip if chunk is too small
+            if end - start < 50:
+                continue
+            
+            # Extract the chunk text
+            chunk_text = text[start:end].strip()
+            
+            # Skip empty chunks
+            if not chunk_text:
+                continue
+            
+            # Identify the chunk type
+            chunk_type = self.identify_chunk_type(chunk_text)
+            
+            segments.append({
+                "text": chunk_text,
+                "type": chunk_type
+            })
+        
+        return segments
+    
+    def get_db_stats(self):
+        """
+        Get statistics about the current database state.
+        
+        Returns:
+            Dict containing database statistics
+        """
+        stats = {
+            "database_path": self.db_path,
+            "collection_name": self.collection_name,
+            "embedding_type": "OpenAI" if self.use_openai_embeddings else "SentenceTransformer",
+            "total_chunks": 0,
+            "unique_issues": 0,
+            "chunk_types": {},
+            "issue_states": {}
+        }
+        
+        try:
+            # Get total number of chunks
+            total_chunks = self.collection.count()
+            stats["total_chunks"] = total_chunks
+            
+            # If no chunks, return early
+            if total_chunks == 0:
+                return stats
+                
+            # Get metadata for all chunks
+            # We need to batch this for large collections
+            batch_size = 1000
+            all_metadata = []
+            
+            for offset in range(0, total_chunks, batch_size):
+                # Get a batch of IDs
+                batch_limit = min(batch_size, total_chunks - offset)
+                batch_results = self.collection.get(limit=batch_limit, offset=offset)
+                all_metadata.extend(batch_results["metadatas"])
+                
+            # Process metadata
+            issue_numbers = set()
+            chunk_types = {}
+            issue_states = {}
+            
+            for meta in all_metadata:
+                # Count unique issues
+                if "issue_number" in meta:
+                    issue_numbers.add(meta["issue_number"])
+                    
+                # Count chunk types
+                if "chunk_type" in meta:
+                    chunk_type = meta["chunk_type"]
+                    chunk_types[chunk_type] = chunk_types.get(chunk_type, 0) + 1
+                    
+                # Count issue states
+                if "state" in meta:
+                    state = meta["state"]
+                    issue_states[state] = issue_states.get(state, 0) + 1
+            
+            stats["unique_issues"] = len(issue_numbers)
+            stats["chunk_types"] = chunk_types
+            stats["issue_states"] = issue_states
+            
+            return stats
+        except Exception as e:
+            print(f"Error getting database statistics: {str(e)}")
+            return stats
+
+    def print_progress_report(self):
+        """
+        Print detailed report about the current state of the database.
+        """
+        stats = self.get_db_stats()
+        
+        print("\n" + "="*50)
+        print(f"DATABASE STATUS REPORT")
+        print("="*50)
+        print(f"Database Path: {stats['database_path']}")
+        print(f"Collection: {stats['collection_name']}")
+        print(f"Embedding Model: {stats['embedding_type']}")
+        print("-"*50)
+        print(f"Total Semantic Chunks: {stats['total_chunks']}")
+        print(f"Unique Issues: {stats['unique_issues']}")
+        print("-"*50)
+        
+        if stats["chunk_types"]:
+            print("Chunk Types Distribution:")
+            # Sort by count, descending
+            for chunk_type, count in sorted(stats["chunk_types"].items(), key=lambda x: x[1], reverse=True):
+                percentage = count / stats["total_chunks"] * 100
+                print(f"  - {chunk_type}: {count} chunks ({percentage:.1f}%)")
+        
+        if stats["issue_states"]:
+            print("\nIssue States:")
+            for state, count in sorted(stats["issue_states"].items(), key=lambda x: x[1], reverse=True):
+                percentage = count / stats["unique_issues"] * 100 if stats["unique_issues"] > 0 else 0
+                print(f"  - {state}: {count} issues ({percentage:.1f}%)")
+        
+        print("="*50)
 def main():
     """
     Main function to create the vector database.
@@ -541,6 +1104,8 @@ def main():
                       help="OpenAI API key (optional if set as environment variable)")
     parser.add_argument("--query", type=str,
                       help="Optional query to test the database after creation")
+    parser.add_argument("--stats-only", action="store_true",
+                      help="Only show database statistics without processing issues")
     
     args = parser.parse_args()
     
@@ -553,8 +1118,17 @@ def main():
         use_openai_embeddings=args.use_openai
     )
     
+    # If stats-only flag is provided, just print the database statistics and exit
+    if args.stats_only:
+        db.print_progress_report()
+        return
+    
     # Process all issues
     db.process_issues()
+    
+    # Print the database statistics after processing
+    print("\nDatabase processing completed. Current statistics:")
+    db.print_progress_report()
     
     # Test query if provided
     if args.query:
