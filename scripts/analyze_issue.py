@@ -341,7 +341,7 @@ def analyze_single_issue(issue_data, repo_owner, repo_name, github_token, chat_m
         analysis_result = analyze_issue_for_regression(issue_content, issue_number, chat_model)
         final_decision = analysis_result["decision"]
         final_reason = analysis_result["reason"]
-        final_conclude = analysis_result["initial_analysis"].initial_result.get('reason', 'N/A')
+        final_conclude = analysis_result["initial_analysis"].get('reason', 'N/A')
         
         # Common headers for GitHub API calls
         headers = {
