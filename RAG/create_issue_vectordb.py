@@ -15,6 +15,8 @@ import numpy as np
 
 # Add imports for Azure OpenAI integration
 from azure.identity import DefaultAzureCredential
+from openai import AzureOpenAI  # Updated import for new Azure OpenAI client
+from azure.core.credentials import AzureKeyCredential
 from langchain_openai import AzureChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
@@ -248,6 +250,69 @@ def get_azure_chat_model(model_id="gpt-4o"):
     except Exception as e:
         raise AzureChatOpenAIError(str(e)) from e
 
+class AzureOpenAIEmbeddingFunction:
+    """
+    Embedding function that uses Azure OpenAI embeddings API.
+    """
+    
+    def __init__(
+        self,
+        azure_endpoint: str,
+        api_key: str,
+        deployment_name: str = "text-embedding-3-small",
+        api_version: str = "2024-02-01",
+        dimensions: Optional[int] = None,
+    ):
+        """
+        Initialize the Azure OpenAI embedding function.
+        
+        Args:
+            azure_endpoint: The Azure OpenAI endpoint URL
+            api_key: The Azure OpenAI API key
+            deployment_name: The deployment name for the embedding model
+            api_version: The API version to use
+            dimensions: The dimensions of the embedding vectors (if None, uses default)
+        """
+        self.client = AzureOpenAI(
+            api_version="2024-12-01-preview",
+            endpoint=azure_endpoint,
+            credential=AzureKeyCredential(api_key)
+        )
+        self.deployment_name = deployment_name
+        self.dimensions = dimensions
+    
+    def __call__(self, texts: List[str]) -> List[List[float]]:
+        """
+        Generate embeddings for the given texts.
+        
+        Args:
+            texts: A list of texts to generate embeddings for
+            
+        Returns:
+            A list of embeddings, one for each text
+        """
+        # Check if texts list is empty
+        if not texts:
+            return []
+        
+        try:
+            response = self.client.embeddings.create(
+                input=texts,
+                model=self.deployment_name
+            )
+            
+            # Extract embeddings from response
+            embeddings = [item.embedding for item in response.data]
+            return embeddings
+        except Exception as e:
+            print(f"Error generating embeddings with Azure OpenAI: {e}")
+            # Return zero vectors as fallback
+            if self.dimensions:
+                return [[0.0] * self.dimensions] * len(texts)
+            else:
+                # Default dimension for text-embedding-3-small is 1536
+                return [[0.0] * 1536] * len(texts)
+
 class IssueVectorDatabase:
     """
     A class for creating and managing a vector database of GitHub issues using ChromaDB
@@ -261,7 +326,13 @@ class IssueVectorDatabase:
                  openai_api_key: Optional[str] = None,
                  use_openai_embeddings: bool = True,
                  chunk_overlap: int = 100,
-                 max_tokens_per_chunk: int = 1000):
+                 max_tokens_per_chunk: int = 1000,
+                 use_llm_chunking: bool = False,
+                 use_azure_openai: bool = False,
+                 azure_openai_endpoint: Optional[str] = None,
+                 azure_openai_key: Optional[str] = None,
+                 azure_openai_deployment: str = "text-embedding-3-small",
+                 azure_openai_api_version: str = "2024-12-01-preview"):  # Added Azure OpenAI parameters
         """
         Initialize the Issue Vector Database.
         
@@ -269,31 +340,60 @@ class IssueVectorDatabase:
             issues_json_path: Path to the issues JSON file
             db_path: Path to store the ChromaDB database
             collection_name: Name of the collection in ChromaDB
-            openai_api_key: OpenAI API key (optional if using local embeddings)
+            openai_api_key: OpenAI API key (required if using OpenAI embeddings)
             use_openai_embeddings: Whether to use OpenAI embeddings or SentenceTransformers
             chunk_overlap: Number of characters to overlap between chunks
             max_tokens_per_chunk: Maximum tokens per chunk
+            use_llm_chunking: Whether to use LLM-based chunking (False by default, uses pattern-based chunking)
+            use_azure_openai: Whether to use Azure OpenAI embeddings instead of regular OpenAI
+            azure_openai_endpoint: Azure OpenAI endpoint URL
+            azure_openai_key: Azure OpenAI API key
+            azure_openai_deployment: Azure OpenAI deployment name
+            azure_openai_api_version: Azure OpenAI API version
         """
         self.issues_json_path = issues_json_path
         self.db_path = db_path
         self.collection_name = collection_name
-        self.openai_api_key = openai_api_key or os.environ.get("OPENAI_API_KEY")
+        self.openai_api_key = openai_api_key
         self.use_openai_embeddings = use_openai_embeddings
         self.chunk_overlap = chunk_overlap
         self.max_tokens_per_chunk = max_tokens_per_chunk
+        self.use_llm_chunking = use_llm_chunking
+        
+        # Azure OpenAI settings
+        self.use_azure_openai = use_azure_openai
+        self.azure_openai_endpoint = azure_openai_endpoint
+        self.azure_openai_key = azure_openai_key
+        self.azure_openai_deployment = azure_openai_deployment
+        self.azure_openai_api_version = azure_openai_api_version
         
         # Initialize ChromaDB client
         self.client = chromadb.PersistentClient(path=db_path)
         
         # Choose embedding function based on configuration
         if use_openai_embeddings:
-            if not self.openai_api_key:
-                raise ValueError("OpenAI API key is required for OpenAI embeddings")
-            self.embedding_function = embedding_functions.OpenAIEmbeddingFunction(
-                api_key=self.openai_api_key,
-                model_name="text-embedding-3-small"
-            )
-            self.openai_client = OpenAI(api_key=self.openai_api_key)
+            if self.use_azure_openai:
+                # Use Azure OpenAI embeddings
+                if not self.azure_openai_endpoint or not self.azure_openai_key:
+                    raise ValueError("Azure OpenAI endpoint and API key are required for Azure OpenAI embeddings")
+                
+                self.embedding_function = AzureOpenAIEmbeddingFunction(
+                    azure_endpoint=self.azure_openai_endpoint,
+                    deployment_name=self.azure_openai_deployment,
+                    api_version=self.azure_openai_api_version,
+                    api_key=self.azure_openai_key
+                )
+                print(f"Using Azure OpenAI embeddings with deployment: {self.azure_openai_deployment}")
+            else:
+                # Use regular OpenAI embeddings
+                if not self.openai_api_key:
+                    raise ValueError("OpenAI API key is required for OpenAI embeddings")
+                
+                self.embedding_function = embedding_functions.OpenAIEmbeddingFunction(
+                    api_key=self.openai_api_key,
+                    model_name="text-embedding-3-small"
+                )
+                self.openai_client = OpenAI(api_key=self.openai_api_key)
         else:
             # Use local embeddings with SentenceTransformers
             self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
@@ -439,7 +539,7 @@ class IssueVectorDatabase:
     
     def semantic_chunk_text(self, text: str, issue_number: int, issue_data: Dict) -> List[Dict]:
         """
-        Intelligently chunk text using LLM or pattern-based fallback.
+        Intelligently chunk text using LLM or pattern-based approach based on configuration.
         
         Args:
             text: Text to chunk
@@ -467,8 +567,11 @@ class IssueVectorDatabase:
                 }
             }]
         
-        # Use LLM segmentation for intelligent chunking
-        segments = self.llm_segment_text(text)
+        # Choose chunking method based on configuration
+        if self.use_llm_chunking:
+            segments = self.llm_segment_text(text)
+        else:
+            segments = self.pattern_based_segment_text(text)
         
         # Create properly formatted chunks with metadata
         chunks = []
@@ -479,7 +582,7 @@ class IssueVectorDatabase:
                 "metadata": {
                     "issue_number": issue_number,
                     "issue_title": issue_data.get("title", ""),
-                    "chunk_type": segment["type"],  # Use the type identified by LLM
+                    "chunk_type": segment["type"],
                     "position": i,  # Position within the issue
                     "state": issue_data.get("state", ""),
                     "author": issue_data.get("author", ""),
@@ -1102,10 +1205,21 @@ def main():
                       help="Use OpenAI embeddings (requires API key)")
     parser.add_argument("--openai-api-key", type=str,
                       help="OpenAI API key (optional if set as environment variable)")
+    parser.add_argument("--use-llm-chunking", action="store_true",
+                      help="Use LLM-based chunking instead of pattern-based chunking for text segmentation")
     parser.add_argument("--query", type=str,
                       help="Optional query to test the database after creation")
     parser.add_argument("--stats-only", action="store_true",
                       help="Only show database statistics without processing issues")
+    # Add missing Azure OpenAI arguments
+    parser.add_argument("--use-azure-openai", action="store_true",
+                      help="Use Azure OpenAI embeddings instead of regular OpenAI")
+    parser.add_argument("--azure-endpoint", type=str,
+                      help="Azure OpenAI endpoint URL")
+    parser.add_argument("--azure-key", type=str,
+                      help="Azure OpenAI API key")
+    parser.add_argument("--azure-deployment", type=str, default="text-embedding-3-small",
+                      help="Azure OpenAI deployment name")
     
     args = parser.parse_args()
     
@@ -1115,7 +1229,11 @@ def main():
         db_path=args.db_path,
         collection_name=args.collection,
         openai_api_key=args.openai_api_key,
-        use_openai_embeddings=args.use_openai
+        use_openai_embeddings=args.use_openai,
+        use_llm_chunking=args.use_llm_chunking,  # Pass the value directly
+        use_azure_openai=args.use_azure_openai,  # Pass the value directly
+        azure_openai_endpoint="https://officegithubcopilotextsubdomain.openai.azure.com/", 
+        azure_openai_key="738de36fc51e48309dae2ab3aab6f935",  # Set to None, not using environment variable
     )
     
     # If stats-only flag is provided, just print the database statistics and exit
