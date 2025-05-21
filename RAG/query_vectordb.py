@@ -5,9 +5,15 @@ import sys
 from typing import Dict, Optional, List, Any
 from pathlib import Path
 
+# Add parent directory to sys.path to allow importing from embeddings package
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import chromadb
 from chromadb.utils import embedding_functions
 from chromadb.errors import NotFoundError
+
+# Import the embedding module
+from embeddings.azure_openai_embedding import AzureOpenAIEmbedding
 
 def format_search_result(result: Dict, index: int, related_results: List[Dict] = None, full_related: bool = False) -> str:
     """
@@ -101,6 +107,9 @@ def query_database(
     include_related: bool = True,
     use_openai: bool = False,
     openai_api_key: Optional[str] = None,
+    use_azure_openai: bool = False,
+    azure_openai_endpoint: Optional[str] = None,
+    azure_openai_deployment: Optional[str] = None,
     include_all_issue_chunks: bool = False
 ) -> List[Dict[str, Any]]:
     """
@@ -115,6 +124,9 @@ def query_database(
         include_related: Whether to include related chunks
         use_openai: Whether to use OpenAI embeddings
         openai_api_key: OpenAI API key
+        use_azure_openai: Whether to use Azure OpenAI embeddings
+        azure_openai_endpoint: Azure OpenAI endpoint URL
+        azure_openai_deployment: Azure OpenAI deployment name
         include_all_issue_chunks: Whether to include all chunks from the same issue
         
     Returns:
@@ -131,7 +143,37 @@ def query_database(
     client = chromadb.PersistentClient(path=db_path)
     
     # Choose embedding function
-    if use_openai:
+    if use_azure_openai:
+        # Use Azure OpenAI embedding function
+        endpoint = azure_openai_endpoint or os.environ.get("AZURE_OPENAI_ENDPOINT")
+        deployment = azure_openai_deployment or os.environ.get("AZURE_OPENAI_DEPLOYMENT")
+        
+        if not endpoint or not deployment:
+            print("Error: Azure OpenAI endpoint and deployment are required for Azure OpenAI embeddings.")
+            print("Please provide --azure-openai-endpoint and --azure-openai-deployment parameters")
+            print("or set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT environment variables.")
+            return []
+        
+        try:
+            azure_embedding = AzureOpenAIEmbedding(
+                endpoint=endpoint,
+                deployment=deployment
+            )
+            
+            # Create a custom embedding function that uses AzureOpenAIEmbedding
+            class AzureOpenAIEmbeddingFunction(embedding_functions.EmbeddingFunction):
+                def __call__(self, texts):
+                    return azure_embedding.get_embeddings(texts)
+            
+            embedding_function = AzureOpenAIEmbeddingFunction()
+            print(f"Using Azure OpenAI embeddings with deployment {deployment}")
+        except Exception as e:
+            print(f"Error initializing Azure OpenAI embeddings: {str(e)}")
+            print("Falling back to default embeddings.")
+            embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+                model_name="all-MiniLM-L6-v2"
+            )
+    elif use_openai:
         api_key = openai_api_key or os.environ.get("OPENAI_API_KEY")
         if not api_key:
             print("Error: OpenAI API key is required for OpenAI embeddings.")
@@ -314,6 +356,12 @@ def main():
                       help="Use OpenAI embeddings (requires API key)")
     parser.add_argument("--openai-api-key", type=str,
                       help="OpenAI API key (optional if set as environment variable)")
+    parser.add_argument("--use-azure-openai", action="store_true",
+                      help="Use Azure OpenAI embeddings (requires endpoint and deployment)")
+    parser.add_argument("--azure-openai-endpoint", type=str,
+                      help="Azure OpenAI endpoint URL (optional if set as AZURE_OPENAI_ENDPOINT environment variable)")
+    parser.add_argument("--azure-openai-deployment", type=str,
+                      help="Azure OpenAI deployment name (optional if set as AZURE_OPENAI_DEPLOYMENT environment variable)")
     parser.add_argument("--issue-number", type=int,
                       help="Filter by issue number")
     parser.add_argument("--state", type=str, choices=["open", "closed"],
@@ -348,6 +396,9 @@ def main():
         include_related=not args.no_related,
         use_openai=args.use_openai,
         openai_api_key=args.openai_api_key,
+        use_azure_openai=args.use_azure_openai,
+        azure_openai_endpoint=args.azure_openai_endpoint,
+        azure_openai_deployment=args.azure_openai_deployment,
         include_all_issue_chunks=args.include_all_issue_chunks
     )
     
