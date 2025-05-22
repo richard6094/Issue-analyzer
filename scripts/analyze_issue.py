@@ -2,10 +2,13 @@ import os
 import json
 import requests
 from azure.identity import DefaultAzureCredential
-from langchain_openai import AzureChatOpenAI
-from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import JsonOutputParser
+
+# Import LLM module
+from LLM import (
+    get_azure_llm,
+    generate_chat_response,
+    generate_structured_output
+)
 
 class AzureChatOpenAIError(Exception):
     """Exception raised for errors in Azure OpenAI chat operations."""
@@ -21,12 +24,12 @@ def get_azure_chat_model(model_id="gpt-4o"):
     """Get a configured Azure OpenAI chat model through LangChain."""
     try:
         # Create Azure OpenAI chat model with Azure AD authentication
-        chat_model = AzureChatOpenAI(
-            deployment_name=model_id,
+        chat_model = get_azure_llm(
+            deployment=model_id,
             api_version="2025-01-01-preview",
             azure_endpoint="https://officegithubcopilotextsubdomain.openai.azure.com/",
-            azure_ad_token_provider=get_azure_ad_token(),
             temperature=0,  # Use deterministic output for analysis
+            azure_ad_token_provider=get_azure_ad_token(),
             model_kwargs={"response_format": {"type": "json_object"}}  # Ensure JSON output
         )
         return chat_model
@@ -98,31 +101,31 @@ def is_outlook_exclusive_issue(issue_title, issue_body, chat_model):
     issue_content = f"Issue Title: {issue_title}\n\nIssue Description: {issue_body}"
     
     # Create a specific prompt for Outlook exclusivity detection
-    outlook_prompt = ChatPromptTemplate.from_messages([
-        ("system", """You are an expert at analyzing software issues. 
-        Your task is to determine if an issue is exclusively related to Microsoft Outlook.
-        An 'Outlook-exclusive issue' is a problem that:
-        1. Only occurs in Microsoft Outlook (desktop, web, or mobile)
-        2. Is specifically related to Outlook functionality or features
-        3. Not related to other Office 365 applications or services, like Word, Excel, etc.
-        
-        Provide a JSON response with your analysis."""),
-        ("human", """Analyze the following issue and determine if it's exclusively an Outlook-related issue.
-        Response must be JSON with:
-        - 'is_outlook_exclusive': boolean
-        - 'confidence': number between 0 and 1
-        - 'reason': string explaining your decision
-        
-        Issue content:
-        {issue}""")
-    ])
+    outlook_prompt = {
+        "model": chat_model,
+        "messages": [
+            {"role": "system", "content": """You are an expert at analyzing software issues. 
+            Your task is to determine if an issue is exclusively related to Microsoft Outlook.
+            An 'Outlook-exclusive issue' is a problem that:
+            1. Only occurs in Microsoft Outlook (desktop, web, or mobile)
+            2. Is specifically related to Outlook functionality or features
+            3. Not related to other Office 365 applications or services, like Word, Excel, etc.
+            
+            Provide a JSON response with your analysis."""},
+            {"role": "user", "content": """Analyze the following issue and determine if it's exclusively an Outlook-related issue.
+            Response must be JSON with:
+            - 'is_outlook_exclusive': boolean
+            - 'confidence': number between 0 and 1
+            - 'reason': string explaining your decision
+            
+            Issue content:
+            {issue}"""}
+        ]
+    }
     
     try:
-        # Define parser for the expected output format
-        parser = JsonOutputParser()
-        
         # Execute the analysis
-        result = outlook_prompt.pipe(chat_model).pipe(parser).invoke({"issue": issue_content})
+        result = generate_structured_output(outlook_prompt, {"issue": issue_content})
         
         # Print result for debugging
         print(f"Outlook exclusivity analysis result:")
@@ -175,24 +178,26 @@ def analyze_issue_for_regression(issue_content, issue_number, chat_model):
     
     try:
         # Step 1: Initial Analysis
-        initial_prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are an expert at analyzing software issues. 
-            Your task is to determine if an issue is a regression. 
-            A regression is a bug where functionality that previously worked no longer works due to a recent change.
-            Analyze the issue carefully and provide a detailed explanation.
-            Provide a JSON response."""),
-            ("human", """Analyze the following issue and determine if it's a regression issue.
-            Response must be JSON with:
-            - 'is_regression': boolean
-            - 'confidence': number between 0 and 1
-            - 'reason': string explaining your decision
-            
-            Issue content:
-            {issue}""")
-        ])
+        initial_prompt = {
+            "model": chat_model,
+            "messages": [
+                {"role": "system", "content": """You are an expert at analyzing software issues. 
+                Your task is to determine if an issue is a regression. 
+                A regression is a bug where functionality that previously worked no longer works due to a recent change.
+                Analyze the issue carefully and provide a detailed explanation.
+                Provide a JSON response."""},
+                {"role": "user", "content": """Analyze the following issue and determine if it's a regression issue.
+                Response must be JSON with:
+                - 'is_regression': boolean
+                - 'confidence': number between 0 and 1
+                - 'reason': string explaining your decision
+                
+                Issue content:
+                {issue}"""}
+            ]
+        }
         
-        parser = JsonOutputParser()
-        initial_result = initial_prompt.pipe(chat_model).pipe(parser).invoke({"issue": issue_content})
+        initial_result = generate_structured_output(initial_prompt, {"issue": issue_content})
         
         print(f"Initial analysis result for issue #{issue_number}:")
         print(json.dumps(initial_result, ensure_ascii=False, indent=2))
@@ -201,30 +206,33 @@ def analyze_issue_for_regression(issue_content, issue_number, chat_model):
         # Create a new model instance to ensure no context sharing
         verification_model = get_azure_chat_model(model_id="gpt-4o")
         
-        verification_prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are an expert at verifying software regression issues.
-            Your task is to provide a second opinion on whether an issue is a regression or not.
-            
-            A regression is a bug where functionality that previously worked properly no longer works due to a recent change.
-            
-            Your analysis must be completely independent. Be skeptical and thorough.
-            Classify the issue into one of three categories:
-            1. Confirmed regression: You're confident this is a regression bug
-            2. Confirmed not regression: You're confident this is NOT a regression bug
-            3. Uncertain: You cannot determine with confidence
-            """),
-            ("human", """Review this issue and determine if it's a regression issue.
-            
-            Response must be JSON with:
-            - 'verification_result': string, one of ["confirmed_regression", "confirmed_not_regression", "uncertain"]
-            - 'confidence': number between 0 and 1
-            - 'explanation': string explaining your reasoning
-            
-            Issue content:
-            {issue}""")
-        ])
+        verification_prompt = {
+            "model": verification_model,
+            "messages": [
+                {"role": "system", "content": """You are an expert at verifying software regression issues.
+                Your task is to provide a second opinion on whether an issue is a regression or not.
+                
+                A regression is a bug where functionality that previously worked properly no longer works due to a recent change.
+                
+                Your analysis must be completely independent. Be skeptical and thorough.
+                Classify the issue into one of three categories:
+                1. Confirmed regression: You're confident this is a regression bug
+                2. Confirmed not regression: You're confident this is NOT a regression bug
+                3. Uncertain: You cannot determine with confidence
+                """},
+                {"role": "user", "content": """Review this issue and determine if it's a regression issue.
+                
+                Response must be JSON with:
+                - 'verification_result': string, one of ["confirmed_regression", "confirmed_not_regression", "uncertain"]
+                - 'confidence': number between 0 and 1
+                - 'explanation': string explaining your reasoning
+                
+                Issue content:
+                {issue}"""}
+            ]
+        }
         
-        verification_result = verification_prompt.pipe(verification_model).pipe(parser).invoke({"issue": issue_content})
+        verification_result = generate_structured_output(verification_prompt, {"issue": issue_content})
         
         print(f"Verification result for issue #{issue_number}:")
         print(json.dumps(verification_result, ensure_ascii=False, indent=2))
