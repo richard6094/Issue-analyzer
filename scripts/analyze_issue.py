@@ -3,6 +3,7 @@ import json
 import requests
 import sys
 from azure.identity import DefaultAzureCredential
+from langchain_core.output_parsers import JsonOutputParser
 
 # Add parent directory to the Python path to find the LLM module
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
