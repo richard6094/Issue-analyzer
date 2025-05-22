@@ -1,9 +1,13 @@
 import os
 import json
 import requests
+import sys
 from azure.identity import DefaultAzureCredential
 
-# Import LLM module
+# Add parent directory to the Python path to find the LLM module
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Import our LLM module
 from LLM import (
     get_azure_llm,
     generate_chat_response,
