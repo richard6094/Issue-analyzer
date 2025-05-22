@@ -432,7 +432,7 @@ def analyze_issues():
         specific_issue = os.environ.get("ISSUE_NUMBER")
         
         # Initialize model - we only need one model now
-        model_id =get_openai_llm "gpt-4o"
+        model_id ="gpt-4o"
         chat_model = get_azure_chat_model(model_id)
         
         # These are no longer used directly in analyze_single_issue
