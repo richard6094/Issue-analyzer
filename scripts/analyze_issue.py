@@ -33,7 +33,6 @@ def get_azure_chat_model(model_id="gpt-4o"):
             api_version="2025-01-01-preview",
             endpoint="https://officegithubcopilotextsubdomain.openai.azure.com/",
             temperature=0,  # Use deterministic output for analysis
-            azure_ad_token_provider=get_azure_ad_token(),
             model_kwargs={"response_format": {"type": "json_object"}}  # Ensure JSON output
         )
         return chat_model
