@@ -1,19 +1,11 @@
 import os
 import json
 import requests
-import sys
 from azure.identity import DefaultAzureCredential
+from langchain_openai import AzureChatOpenAI
+from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
-
-# Add parent directory to the Python path to find the LLM module
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-# Import our LLM module
-from LLM import (
-    get_azure_llm,
-    generate_chat_response,
-    generate_structured_output
-)
 
 class AzureChatOpenAIError(Exception):
     """Exception raised for errors in Azure OpenAI chat operations."""
@@ -29,10 +21,11 @@ def get_azure_chat_model(model_id="gpt-4o"):
     """Get a configured Azure OpenAI chat model through LangChain."""
     try:
         # Create Azure OpenAI chat model with Azure AD authentication
-        chat_model = get_azure_llm(
-            deployment=model_id,
+        chat_model = AzureChatOpenAI(
+            deployment_name=model_id,
             api_version="2025-01-01-preview",
-            endpoint="https://officegithubcopilotextsubdomain.openai.azure.com/",
+            azure_endpoint="https://officegithubcopilotextsubdomain.openai.azure.com/",
+            azure_ad_token_provider=get_azure_ad_token(),
             temperature=0,  # Use deterministic output for analysis
             model_kwargs={"response_format": {"type": "json_object"}}  # Ensure JSON output
         )
@@ -104,34 +97,32 @@ def is_outlook_exclusive_issue(issue_title, issue_body, chat_model):
     # Prepare issue content
     issue_content = f"Issue Title: {issue_title}\n\nIssue Description: {issue_body}"
     
-    # Create prompt messages with proper format for Azure OpenAI API
-    messages = [
-        {"role": "system", "content": [{"type": "text", "text": """You are an expert at analyzing software issues. 
+    # Create a specific prompt for Outlook exclusivity detection
+    outlook_prompt = ChatPromptTemplate.from_messages([
+        ("system", """You are an expert at analyzing software issues. 
         Your task is to determine if an issue is exclusively related to Microsoft Outlook.
         An 'Outlook-exclusive issue' is a problem that:
         1. Only occurs in Microsoft Outlook (desktop, web, or mobile)
         2. Is specifically related to Outlook functionality or features
         3. Not related to other Office 365 applications or services, like Word, Excel, etc.
         
-        Provide a JSON response with your analysis."""}]},
-        {"role": "user", "content": [{"type": "text", "text": """Analyze the following issue and determine if it's exclusively an Outlook-related issue.
+        Provide a JSON response with your analysis."""),
+        ("human", """Analyze the following issue and determine if it's exclusively an Outlook-related issue.
         Response must be JSON with:
         - 'is_outlook_exclusive': boolean
         - 'confidence': number between 0 and 1
         - 'reason': string explaining your decision
         
         Issue content:
-        {issue}"""}]}
-    ]
+        {issue}""")
+    ])
     
     try:
-        # Execute the analysis - properly passing the chat_model and provider parameters
-        result = generate_structured_output(
-            prompt=messages,
-            output_schema={"issue": issue_content},
-            llm=chat_model,
-            provider="azure"  # Explicitly setting provider to azure
-        )
+        # Define parser for the expected output format
+        parser = JsonOutputParser()
+        
+        # Execute the analysis
+        result = outlook_prompt.pipe(chat_model).pipe(parser).invoke({"issue": issue_content})
         
         # Print result for debugging
         print(f"Outlook exclusivity analysis result:")
@@ -184,28 +175,24 @@ def analyze_issue_for_regression(issue_content, issue_number, chat_model):
     
     try:
         # Step 1: Initial Analysis
-        initial_messages = [
-            {"role": "system", "content": [{"type": "text", "text": """You are an expert at analyzing software issues. 
+        initial_prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are an expert at analyzing software issues. 
             Your task is to determine if an issue is a regression. 
             A regression is a bug where functionality that previously worked no longer works due to a recent change.
             Analyze the issue carefully and provide a detailed explanation.
-            Provide a JSON response."""}]},
-            {"role": "user", "content": [{"type": "text", "text": """Analyze the following issue and determine if it's a regression issue.
+            Provide a JSON response."""),
+            ("human", """Analyze the following issue and determine if it's a regression issue.
             Response must be JSON with:
             - 'is_regression': boolean
             - 'confidence': number between 0 and 1
             - 'reason': string explaining your decision
             
             Issue content:
-            {issue}"""}]}
-        ]
+            {issue}""")
+        ])
         
-        initial_result = generate_structured_output(
-            prompt=initial_messages,
-            output_schema={"issue": issue_content},
-            llm=chat_model,
-            provider="azure"
-        )
+        parser = JsonOutputParser()
+        initial_result = initial_prompt.pipe(chat_model).pipe(parser).invoke({"issue": issue_content})
         
         print(f"Initial analysis result for issue #{issue_number}:")
         print(json.dumps(initial_result, ensure_ascii=False, indent=2))
@@ -214,8 +201,8 @@ def analyze_issue_for_regression(issue_content, issue_number, chat_model):
         # Create a new model instance to ensure no context sharing
         verification_model = get_azure_chat_model(model_id="gpt-4o")
         
-        verification_messages = [
-            {"role": "system", "content": [{"type": "text", "text": """You are an expert at verifying software regression issues.
+        verification_prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are an expert at verifying software regression issues.
             Your task is to provide a second opinion on whether an issue is a regression or not.
             
             A regression is a bug where functionality that previously worked properly no longer works due to a recent change.
@@ -225,8 +212,8 @@ def analyze_issue_for_regression(issue_content, issue_number, chat_model):
             1. Confirmed regression: You're confident this is a regression bug
             2. Confirmed not regression: You're confident this is NOT a regression bug
             3. Uncertain: You cannot determine with confidence
-            """}]},
-            {"role": "user", "content": [{"type": "text", "text": """Review this issue and determine if it's a regression issue.
+            """),
+            ("human", """Review this issue and determine if it's a regression issue.
             
             Response must be JSON with:
             - 'verification_result': string, one of ["confirmed_regression", "confirmed_not_regression", "uncertain"]
@@ -234,15 +221,10 @@ def analyze_issue_for_regression(issue_content, issue_number, chat_model):
             - 'explanation': string explaining your reasoning
             
             Issue content:
-            {issue}"""}]}
-        ]
+            {issue}""")
+        ])
         
-        verification_result = generate_structured_output(
-            prompt=verification_messages,
-            output_schema={"issue": issue_content},
-            llm=verification_model,
-            provider="azure"
-        )
+        verification_result = verification_prompt.pipe(verification_model).pipe(parser).invoke({"issue": issue_content})
         
         print(f"Verification result for issue #{issue_number}:")
         print(json.dumps(verification_result, ensure_ascii=False, indent=2))
@@ -450,7 +432,7 @@ def analyze_issues():
         specific_issue = os.environ.get("ISSUE_NUMBER")
         
         # Initialize model - we only need one model now
-        model_id = "gpt-4o"
+        model_id =get_openai_llm "gpt-4o"
         chat_model = get_azure_chat_model(model_id)
         
         # These are no longer used directly in analyze_single_issue
