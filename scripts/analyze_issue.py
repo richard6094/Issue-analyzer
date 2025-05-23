@@ -1,11 +1,22 @@
 import os
+import sys
 import json
 import requests
+import traceback
+from urllib.parse import urlparse
 from azure.identity import DefaultAzureCredential
 from langchain_openai import AzureChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
+
+# Add parent directory to sys.path to allow importing sibling packages
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if parent_dir not in sys.path:
+    sys.path.append(parent_dir)
+
+# Import required functions from image_recognition package
+from image_recognition.image_recognition_provider import extract_image_urls, create_image_content_item
 
 class AzureChatOpenAIError(Exception):
     """Exception raised for errors in Azure OpenAI chat operations."""
@@ -175,8 +186,6 @@ def analyze_issue_for_regression(issue_content, issue_number, chat_model):
     
     try:
         # Check if the issue content contains image URLs
-        from image_recognition import extract_image_urls, create_image_content_item
-        
         image_urls = extract_image_urls(issue_content)
         has_images = len(image_urls) > 0
         
@@ -410,8 +419,6 @@ def analyze_single_issue(issue_data, repo_owner, repo_name, github_token, chat_m
     print(f"Body length: {len(issue_body)} characters")
     
     # Check for images in the issue body
-    from image_recognition import extract_image_urls
-    
     image_urls = extract_image_urls(issue_body)
     has_images = len(image_urls) > 0
     
