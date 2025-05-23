@@ -174,25 +174,69 @@ def analyze_issue_for_regression(issue_content, issue_number, chat_model):
     print(f"Starting dual-LLM regression analysis for issue #{issue_number}")
     
     try:
+        # Check if the issue content contains image URLs
+        from image_recognition import extract_image_urls, create_image_content_item
+        
+        image_urls = extract_image_urls(issue_content)
+        has_images = len(image_urls) > 0
+        
         # Step 1: Initial Analysis
-        initial_prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are an expert at analyzing software issues. 
+        if has_images:
+            print(f"Issue #{issue_number} contains {len(image_urls)} image(s). Including in regression analysis.")
+            
+            # Create system message for analysis with images
+            system_message = """You are an expert at analyzing software issues, including those with images. 
             Your task is to determine if an issue is a regression. 
             A regression is a bug where functionality that previously worked no longer works due to a recent change.
-            Analyze the issue carefully and provide a detailed explanation.
-            Provide a JSON response."""),
-            ("human", """Analyze the following issue and determine if it's a regression issue.
-            Response must be JSON with:
-            - 'is_regression': boolean
-            - 'confidence': number between 0 and 1
-            - 'reason': string explaining your decision
+            Analyze the issue carefully, including any images provided, and provide a detailed explanation.
+            Focus on identifying visual evidence from images that may indicate a regression.
+            Provide a JSON response."""
             
-            Issue content:
-            {issue}""")
-        ])
-        
-        parser = JsonOutputParser()
-        initial_result = initial_prompt.pipe(chat_model).pipe(parser).invoke({"issue": issue_content})
+            # Create human message with both text and images (up to 5 images)
+            human_content = [{"type": "text", "text": f"Analyze the following issue and determine if it's a regression issue.\nResponse must be JSON with:\n- 'is_regression': boolean\n- 'confidence': number between 0 and 1\n- 'reason': string explaining your decision\n\nIssue content:\n{issue_content}"}]
+            
+            # Add up to 5 images directly to the content for analysis
+            valid_image_count = 0
+            for url in image_urls[:5]:  # Limit to first 5 images due to API constraints
+                if valid_image_count >= 5:
+                    break
+                    
+                # Only include URLs that are properly formatted and likely to be images
+                if "http" in url and ("github.com" in url or any(ext in url.lower() for ext in ['.jpg', '.jpeg', '.png', '.gif'])):
+                    human_content.append(create_image_content_item(url))
+                    valid_image_count += 1
+            
+            # Create message for model with images
+            initial_messages = [
+                SystemMessage(content=system_message),
+                HumanMessage(content=human_content)
+            ]
+            
+            # Invoke model directly (not using prompt template due to multimodal content)
+            parser = JsonOutputParser()
+            response = chat_model.invoke(initial_messages)
+            initial_result = parser.parse(response.content)
+            
+        else:
+            # Standard text-only analysis
+            initial_prompt = ChatPromptTemplate.from_messages([
+                ("system", """You are an expert at analyzing software issues. 
+                Your task is to determine if an issue is a regression. 
+                A regression is a bug where functionality that previously worked no longer works due to a recent change.
+                Analyze the issue carefully and provide a detailed explanation.
+                Provide a JSON response."""),
+                ("human", """Analyze the following issue and determine if it's a regression issue.
+                Response must be JSON with:
+                - 'is_regression': boolean
+                - 'confidence': number between 0 and 1
+                - 'reason': string explaining your decision
+                
+                Issue content:
+                {issue}""")
+            ])
+            
+            parser = JsonOutputParser()
+            initial_result = initial_prompt.pipe(chat_model).pipe(parser).invoke({"issue": issue_content})
         
         print(f"Initial analysis result for issue #{issue_number}:")
         print(json.dumps(initial_result, ensure_ascii=False, indent=2))
@@ -201,30 +245,71 @@ def analyze_issue_for_regression(issue_content, issue_number, chat_model):
         # Create a new model instance to ensure no context sharing
         verification_model = get_azure_chat_model(model_id="gpt-4o")
         
-        verification_prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are an expert at verifying software regression issues.
+        # Verification analysis with similar approach as initial analysis
+        if has_images:
+            # Create system message for verification with images
+            system_message = """You are an expert at verifying software regression issues, including those with images.
             Your task is to provide a second opinion on whether an issue is a regression or not.
             
             A regression is a bug where functionality that previously worked properly no longer works due to a recent change.
             
+            Carefully analyze any images provided as they may contain important visual evidence.
             Your analysis must be completely independent. Be skeptical and thorough.
             Classify the issue into one of three categories:
             1. Confirmed regression: You're confident this is a regression bug
             2. Confirmed not regression: You're confident this is NOT a regression bug
             3. Uncertain: You cannot determine with confidence
-            """),
-            ("human", """Review this issue and determine if it's a regression issue.
+            """
             
-            Response must be JSON with:
-            - 'verification_result': string, one of ["confirmed_regression", "confirmed_not_regression", "uncertain"]
-            - 'confidence': number between 0 and 1
-            - 'explanation': string explaining your reasoning
+            # Create human message with both text and images for verification
+            human_content = [{"type": "text", "text": f"Review this issue and determine if it's a regression issue.\n\nResponse must be JSON with:\n- 'verification_result': string, one of [\"confirmed_regression\", \"confirmed_not_regression\", \"uncertain\"]\n- 'confidence': number between 0 and 1\n- 'explanation': string explaining your reasoning\n\nIssue content:\n{issue_content}"}]
             
-            Issue content:
-            {issue}""")
-        ])
-        
-        verification_result = verification_prompt.pipe(verification_model).pipe(parser).invoke({"issue": issue_content})
+            # Add same images as before
+            valid_image_count = 0
+            for url in image_urls[:5]:
+                if valid_image_count >= 5:
+                    break
+                    
+                if "http" in url and ("github.com" in url or any(ext in url.lower() for ext in ['.jpg', '.jpeg', '.png', '.gif'])):
+                    human_content.append(create_image_content_item(url))
+                    valid_image_count += 1
+            
+            # Create verification message
+            verification_messages = [
+                SystemMessage(content=system_message),
+                HumanMessage(content=human_content)
+            ]
+            
+            # Invoke verification model
+            verification_response = verification_model.invoke(verification_messages)
+            verification_result = parser.parse(verification_response.content)
+            
+        else:
+            # Standard text-only verification
+            verification_prompt = ChatPromptTemplate.from_messages([
+                ("system", """You are an expert at verifying software regression issues.
+                Your task is to provide a second opinion on whether an issue is a regression or not.
+                
+                A regression is a bug where functionality that previously worked properly no longer works due to a recent change.
+                
+                Your analysis must be completely independent. Be skeptical and thorough.
+                Classify the issue into one of three categories:
+                1. Confirmed regression: You're confident this is a regression bug
+                2. Confirmed not regression: You're confident this is NOT a regression bug
+                3. Uncertain: You cannot determine with confidence
+                """),
+                ("human", """Review this issue and determine if it's a regression issue.
+                
+                Response must be JSON with:
+                - 'verification_result': string, one of ["confirmed_regression", "confirmed_not_regression", "uncertain"]
+                - 'confidence': number between 0 and 1
+                - 'explanation': string explaining your reasoning
+                
+                Issue content:
+                {issue}""")
+            ])
+            
+            verification_result = verification_prompt.pipe(verification_model).pipe(parser).invoke({"issue": issue_content})
         
         print(f"Verification result for issue #{issue_number}:")
         print(json.dumps(verification_result, ensure_ascii=False, indent=2))
@@ -324,7 +409,16 @@ def analyze_single_issue(issue_data, repo_owner, repo_name, github_token, chat_m
     print(f"\nProcessing issue #{issue_number}: {issue_title}")
     print(f"Body length: {len(issue_body)} characters")
     
-    # Prepare issue content for analysis
+    # Check for images in the issue body
+    from image_recognition import extract_image_urls
+    
+    image_urls = extract_image_urls(issue_body)
+    has_images = len(image_urls) > 0
+    
+    if has_images:
+        print(f"Issue #{issue_number} contains {len(image_urls)} image(s). Images will be processed directly in regression analysis.")
+    
+    # Prepare content for analysis - directly use original content with images
     issue_content = f"Issue Title: {issue_title}\n\nIssue Description: {issue_body}"
     
     # Include comments if requested
@@ -337,7 +431,7 @@ def analyze_single_issue(issue_data, repo_owner, repo_name, github_token, chat_m
             print(f"Added {len(comments)} comments to analysis")
     
     try:
-        # Use the new integrated analysis module
+        # Use the integrated analysis function that directly handles images
         analysis_result = analyze_issue_for_regression(issue_content, issue_number, chat_model)
         final_decision = analysis_result["decision"]
         final_reason = analysis_result["reason"]
@@ -361,6 +455,7 @@ def analyze_single_issue(issue_data, repo_owner, repo_name, github_token, chat_m
                 # Add a comment explaining the label
                 comment_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/issues/{issue_number}/comments"
                 source = "issue content and comments" if include_comments else "issue content"
+                source = f"{source} with image analysis" if has_images else source
                 comment_data = {"body": f"This issue was automatically labeled as a regression based on dual-LLM analysis of the {source}.\n\nReason: {final_conclude}"}
                 requests.post(comment_url, headers=headers, json=comment_data)
                 return True
