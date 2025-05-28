@@ -168,6 +168,22 @@ def get_issue_comments(repo_owner, repo_name, issue_number, github_token):
         print(response.text)
         return []
 
+def escape_template_braces(text):
+    """
+    Escape curly braces in text to prevent LangChain template parsing errors.
+    
+    Args:
+        text: Text that may contain curly braces
+        
+    Returns:
+        Text with single curly braces escaped as double braces
+    """
+    if not text:
+        return text
+    
+    # Replace single curly braces with double braces to escape them in LangChain templates
+    return text.replace("{", "{{").replace("}", "}}")
+
 def analyze_issue_for_regression(issue_content, issue_number, chat_model, issue_title=None, issue_body=None):
     """
     Analyze an issue for regression with dual-LLM verification and RAG enhancement.
@@ -199,11 +215,13 @@ def analyze_issue_for_regression(issue_content, issue_number, chat_model, issue_
         similar_issues_context = ""
         try:
             from RAG.rag_helper import query_vectordb_for_regression
-            similar_issues_context = query_vectordb_for_regression(
+            raw_context = query_vectordb_for_regression(
                 issue_title=title_for_rag,
                 issue_body=body_for_rag,
                 n_results=3
             )
+            # Escape curly braces to prevent LangChain template parsing errors
+            similar_issues_context = escape_template_braces(raw_context)
             print(f"Retrieved similar issues context from vector database.")
         except Exception as e:
             print(f"Warning: Failed to retrieve similar issues from vector database: {str(e)}")
