@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import re
 import requests
 import traceback
 from urllib.parse import urlparse
@@ -166,18 +167,22 @@ def get_issue_comments(repo_owner, repo_name, issue_number, github_token):
         print(response.text)
         return []
 
-def analyze_issue_for_regression(issue_content, issue_number, chat_model):
+def analyze_issue_for_regression(issue_content, issue_number, chat_model, issue_title=None, issue_body=None):
     """
-    Analyze an issue for regression with dual-LLM verification.
+    Analyze an issue for regression with dual-LLM verification and RAG enhancement.
     
     This function performs two independent analyses:
     1. Initial analysis to determine if the issue is a regression
     2. Verification analysis to confirm or challenge the initial result
     
+    Both analyses are enhanced with similar issues from the vector database when available.
+    
     Args:
         issue_content: The issue content (title, body, and optionally comments)
         issue_number: Issue number for logging
         chat_model: The primary LLM model instance
+        issue_title: Optional separate issue title for RAG lookup
+        issue_body: Optional separate issue body for RAG lookup
         
     Returns:
         dict: Analysis result with final decision and reasoning
@@ -185,6 +190,23 @@ def analyze_issue_for_regression(issue_content, issue_number, chat_model):
     print(f"Starting dual-LLM regression analysis for issue #{issue_number}")
     
     try:
+        # Use issue_title and issue_body directly if provided
+        title_for_rag = issue_title if issue_title is not None else ""
+        body_for_rag = issue_body if issue_body is not None else ""
+        
+        # Get similar issues from vector database to enhance analysis
+        similar_issues_context = ""
+        try:
+            from RAG.rag_helper import query_vectordb_for_regression
+            similar_issues_context = query_vectordb_for_regression(
+                issue_title=title_for_rag,
+                issue_body=body_for_rag,
+                n_results=3
+            )
+            print(f"Retrieved similar issues context from vector database.")
+        except Exception as e:
+            print(f"Warning: Failed to retrieve similar issues from vector database: {str(e)}")
+        
         # Check if the issue content contains image URLs
         image_urls = extract_image_urls(issue_content)
         has_images = len(image_urls) > 0
@@ -200,6 +222,10 @@ def analyze_issue_for_regression(issue_content, issue_number, chat_model):
             Analyze the issue carefully, including any images provided, and provide a detailed explanation.
             Focus on identifying visual evidence from images that may indicate a regression.
             Provide a JSON response."""
+            
+            # Add similar issues context to the system message if available
+            if similar_issues_context:
+                system_message += f"\n\nBelow are similar issues from the database that may help in your analysis. Use these as reference points:\n{similar_issues_context}"
             
             # Create human message with both text and images (up to 5 images)
             human_content = [{"type": "text", "text": f"Analyze the following issue and determine if it's a regression issue.\nResponse must be JSON with:\n- 'is_regression': boolean\n- 'confidence': number between 0 and 1\n- 'reason': string explaining your decision\n\nIssue content:\n{issue_content}"}]
@@ -228,12 +254,18 @@ def analyze_issue_for_regression(issue_content, issue_number, chat_model):
             
         else:
             # Standard text-only analysis
+            system_prompt = """You are an expert at analyzing software issues. 
+            Your task is to determine if an issue is a regression. 
+            A regression is a bug where functionality that previously worked no longer works due to a recent change.
+            Analyze the issue carefully and provide a detailed explanation.
+            Provide a JSON response."""
+            
+            # Add similar issues context to the system prompt if available
+            if similar_issues_context:
+                system_prompt += f"\n\nBelow are similar issues from the database that may help in your analysis. Use these as reference points:\n{similar_issues_context}"
+                
             initial_prompt = ChatPromptTemplate.from_messages([
-                ("system", """You are an expert at analyzing software issues. 
-                Your task is to determine if an issue is a regression. 
-                A regression is a bug where functionality that previously worked no longer works due to a recent change.
-                Analyze the issue carefully and provide a detailed explanation.
-                Provide a JSON response."""),
+                ("system", system_prompt),
                 ("human", """Analyze the following issue and determine if it's a regression issue.
                 Response must be JSON with:
                 - 'is_regression': boolean
@@ -257,7 +289,7 @@ def analyze_issue_for_regression(issue_content, issue_number, chat_model):
         # Verification analysis with similar approach as initial analysis
         if has_images:
             # Create system message for verification with images
-            system_message = """You are an expert at verifying software regression issues, including those with images.
+            verification_system_message = """You are an expert at verifying software regression issues, including those with images.
             Your task is to provide a second opinion on whether an issue is a regression or not.
             
             A regression is a bug where functionality that previously worked properly no longer works due to a recent change.
@@ -269,6 +301,10 @@ def analyze_issue_for_regression(issue_content, issue_number, chat_model):
             2. Confirmed not regression: You're confident this is NOT a regression bug
             3. Uncertain: You cannot determine with confidence
             """
+            
+            # Add similar issues context to the verification system message if available
+            if similar_issues_context:
+                verification_system_message += f"\n\nBelow are similar issues from the database that may help in your analysis. Use these as reference points:\n{similar_issues_context}"
             
             # Create human message with both text and images for verification
             human_content = [{"type": "text", "text": f"Review this issue and determine if it's a regression issue.\n\nResponse must be JSON with:\n- 'verification_result': string, one of [\"confirmed_regression\", \"confirmed_not_regression\", \"uncertain\"]\n- 'confidence': number between 0 and 1\n- 'explanation': string explaining your reasoning\n\nIssue content:\n{issue_content}"}]
@@ -285,7 +321,7 @@ def analyze_issue_for_regression(issue_content, issue_number, chat_model):
             
             # Create verification message
             verification_messages = [
-                SystemMessage(content=system_message),
+                SystemMessage(content=verification_system_message),
                 HumanMessage(content=human_content)
             ]
             
@@ -295,18 +331,24 @@ def analyze_issue_for_regression(issue_content, issue_number, chat_model):
             
         else:
             # Standard text-only verification
+            verification_system_prompt = """You are an expert at verifying software regression issues.
+            Your task is to provide a second opinion on whether an issue is a regression or not.
+            
+            A regression is a bug where functionality that previously worked properly no longer works due to a recent change.
+            
+            Your analysis must be completely independent. Be skeptical and thorough.
+            Classify the issue into one of three categories:
+            1. Confirmed regression: You're confident this is a regression bug
+            2. Confirmed not regression: You're confident this is NOT a regression bug
+            3. Uncertain: You cannot determine with confidence
+            """
+            
+            # Add similar issues context to the verification system prompt if available
+            if similar_issues_context:
+                verification_system_prompt += f"\n\nBelow are similar issues from the database that may help in your analysis. Use these as reference points:\n{similar_issues_context}"
+                
             verification_prompt = ChatPromptTemplate.from_messages([
-                ("system", """You are an expert at verifying software regression issues.
-                Your task is to provide a second opinion on whether an issue is a regression or not.
-                
-                A regression is a bug where functionality that previously worked properly no longer works due to a recent change.
-                
-                Your analysis must be completely independent. Be skeptical and thorough.
-                Classify the issue into one of three categories:
-                1. Confirmed regression: You're confident this is a regression bug
-                2. Confirmed not regression: You're confident this is NOT a regression bug
-                3. Uncertain: You cannot determine with confidence
-                """),
+                ("system", verification_system_prompt),
                 ("human", """Review this issue and determine if it's a regression issue.
                 
                 Response must be JSON with:
@@ -439,7 +481,13 @@ def analyze_single_issue(issue_data, repo_owner, repo_name, github_token, chat_m
     
     try:
         # Use the integrated analysis function that directly handles images
-        analysis_result = analyze_issue_for_regression(issue_content, issue_number, chat_model)
+        analysis_result = analyze_issue_for_regression(
+            issue_content=issue_content, 
+            issue_number=issue_number, 
+            chat_model=chat_model,
+            issue_title=issue_title,
+            issue_body=issue_body
+        )
         final_decision = analysis_result["decision"]
         final_reason = analysis_result["reason"]
         final_conclude = analysis_result["initial_analysis"].get('reason', 'N/A')
