@@ -38,6 +38,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install azure-identity requests
           pip install langchain_openai langchain_core
+          pip install chromadb
 
       - name: Analyze issue with LLM
         id: analyze
