@@ -67,7 +67,8 @@ def format_search_result(result: Dict, index: int, related_results: List[Dict] =
             # Either show full content or truncated preview based on full_related parameter
             if full_related:
                 # Display the full content with proper formatting
-                formatted += f"\n    {related['document'].replace('\n', '\n    ')}\n"
+                formatted_content = related['document'].replace('\n', '\n    ')
+                formatted += f"\n    {formatted_content}\n"
             else:
                 # Show truncated preview
                 related_preview = related['document'][:150] + "..." if len(related['document']) > 150 else related['document']
