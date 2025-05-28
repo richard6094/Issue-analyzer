@@ -177,8 +177,15 @@ This was working fine in version 1.2.2.
         print("Issue analysis results:")
         print(json.dumps(issue_analysis, indent=2))
         
-        print("\nComprehensive analysis:")
-        print(issue_analysis["comprehensive_analysis"])
+        # Check if there are any images in the analysis
+        if issue_analysis.get("has_images", False):
+            print("\nImage Descriptions:")
+            for img_data in issue_analysis.get("image_descriptions", []):
+                print(f"\nImage {img_data.get('index', '?')}:")
+                print(f"URL: {img_data.get('url', 'N/A')}")
+                print(f"Description: {img_data.get('description', 'No description available')}")
+        else:
+            print("\nNo images found in the issue or no valid image descriptions generated.")
     except Exception as e:
         print(f"Error analyzing issue with images: {str(e)}")
 

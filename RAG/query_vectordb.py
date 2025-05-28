@@ -15,6 +15,15 @@ from chromadb.errors import NotFoundError
 # Import the embedding module
 from embeddings.azure_openai_embedding import AzureOpenAIEmbedding
 
+# Import image recognition modules
+from image_recognition.image_recognition_provider import (
+    extract_image_urls,
+    is_valid_image_url,
+    analyze_image,
+    get_image_recognition_model,
+    process_text_with_images
+)
+
 def format_search_result(result: Dict, index: int, related_results: List[Dict] = None, full_related: bool = False) -> str:
     """
     Format a single search result for display, including related chunks.
@@ -110,6 +119,7 @@ def query_database(
     use_azure_openai: bool = False,
     azure_openai_endpoint: Optional[str] = None,
     azure_openai_deployment: Optional[str] = None,
+    azure_vision_deployment: Optional[str] = "gpt-4o",
     include_all_issue_chunks: bool = False
 ) -> List[Dict[str, Any]]:
     """
@@ -126,7 +136,8 @@ def query_database(
         openai_api_key: OpenAI API key
         use_azure_openai: Whether to use Azure OpenAI embeddings
         azure_openai_endpoint: Azure OpenAI endpoint URL
-        azure_openai_deployment: Azure OpenAI deployment name
+        azure_openai_deployment: Azure OpenAI deployment name for embeddings
+        azure_vision_deployment: Azure OpenAI deployment name for vision/chat models
         include_all_issue_chunks: Whether to include all chunks from the same issue
         
     Returns:
@@ -138,6 +149,58 @@ def query_database(
         print(f"Please create the vector database first using create_issue_vectordb.py script:")
         print(f"python RAG/create_issue_vectordb.py --input Issue-migration/issues_summaries.json --db-path {db_path}")
         return []
+    
+    # Process image links in the query if any are present
+    image_urls = extract_image_urls(query)
+    if image_urls:
+        try:
+            print(f"Found {len(image_urls)} image links in query. Processing images...")
+            
+            # Set up vision model parameters
+            provider = "azure" if use_azure_openai else "openai"
+            vision_kwargs = {}
+            
+            if use_azure_openai:
+                # For Azure OpenAI
+                endpoint = azure_openai_endpoint or os.environ.get("AZURE_OPENAI_ENDPOINT")
+                deployment = azure_vision_deployment or os.environ.get("AZURE_OPENAI_VISION_DEPLOYMENT") or "gpt-4o"
+                if not endpoint:
+                    print("Warning: Azure OpenAI endpoint is required for image processing. Skipping image analysis.")
+                else:
+                    vision_kwargs = {
+                        "endpoint": endpoint,
+                        "deployment": deployment
+                    }
+            else:
+                # For OpenAI
+                api_key = openai_api_key or os.environ.get("OPENAI_API_KEY")
+                if not api_key:
+                    print("Warning: OpenAI API key is required for image processing. Skipping image analysis.")
+                else:
+                    vision_kwargs = {
+                        "api_key": api_key
+                    }
+            
+            # Create vision model if possible
+            if vision_kwargs:
+                # Process the query text with images, replacing image links with descriptions
+                processed_query = process_text_with_images(
+                    content=query,
+                    provider=provider,
+                    keep_images=False,  # Replace images with descriptions only
+                    **vision_kwargs
+                )
+                
+                if processed_query != query:
+                    print("Successfully processed images in query.")
+                    print("Query updated with image descriptions.")
+                    query = processed_query
+                else:
+                    print("No changes were made to the query after image processing.")
+            
+        except Exception as e:
+            print(f"Error processing images in query: {str(e)}")
+            print("Continuing with original query text.")
     
     # Initialize ChromaDB client
     client = chromadb.PersistentClient(path=db_path)

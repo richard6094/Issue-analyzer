@@ -34,6 +34,15 @@ from embeddings.embedding_provider import EmbeddingProvider
 from embeddings.openai_embedding import OpenAIEmbedding
 from embeddings.azure_openai_embedding import AzureOpenAIEmbedding
 
+# Import image recognition providers
+from image_recognition.image_recognition_provider import (
+    extract_image_urls,
+    process_issue_images,
+    analyze_issue_with_images,
+    get_image_recognition_model,
+    is_valid_image_url
+)
+
 class ProgressTracker:
     """
     Track and display real-time progress during database creation.
@@ -275,6 +284,7 @@ class IssueVectorDatabase:
                  use_azure_openai: bool = False,
                  azure_endpoint: Optional[str] = None,
                  azure_deployment: Optional[str] = None,
+                 azure_vision_deployment: Optional[str] = "gpt-4o", 
                  chunk_overlap: int = 100,
                  max_tokens_per_chunk: int = 1000,
                  use_llm_chunking: bool = False):  # Changed default to False
@@ -289,7 +299,8 @@ class IssueVectorDatabase:
             use_openai_embeddings: Whether to use OpenAI embeddings or SentenceTransformers
             use_azure_openai: Whether to use Azure OpenAI embeddings
             azure_endpoint: Azure OpenAI API endpoint (required if use_azure_openai is True)
-            azure_deployment: Azure OpenAI deployment name (required if use_azure_openai is True)
+            azure_deployment: Azure OpenAI deployment name for embeddings (required if use_azure_openai is True)
+            azure_vision_deployment: Azure OpenAI deployment name for vision/chat models (required for image analysis)
             chunk_overlap: Number of characters to overlap between chunks
             max_tokens_per_chunk: Maximum tokens per chunk
             use_llm_chunking: Whether to use LLM-based chunking (False by default, uses pattern-based chunking)
@@ -302,6 +313,7 @@ class IssueVectorDatabase:
         self.use_azure_openai = use_azure_openai
         self.azure_endpoint = azure_endpoint or os.environ.get("AZURE_OPENAI_ENDPOINT")
         self.azure_deployment = azure_deployment or os.environ.get("AZURE_OPENAI_DEPLOYMENT") or "text-embedding-3-small"
+        self.azure_vision_deployment = azure_vision_deployment or os.environ.get("AZURE_OPENAI_VISION_DEPLOYMENT") or "gpt-4o"
         self.chunk_overlap = chunk_overlap
         self.max_tokens_per_chunk = max_tokens_per_chunk
         self.use_llm_chunking = use_llm_chunking
@@ -512,6 +524,7 @@ class IssueVectorDatabase:
     def semantic_chunk_text(self, text: str, issue_number: int, issue_data: Dict) -> List[Dict]:
         """
         Intelligently chunk text using LLM or pattern-based approach based on configuration.
+        Also identifies and processes images in the text.
         
         Args:
             text: Text to chunk
@@ -519,10 +532,13 @@ class IssueVectorDatabase:
             issue_data: Complete issue data
             
         Returns:
-            List of semantic chunks with metadata
+            List of semantic chunks with metadata (including image chunks)
         """
+        # Check for images in the text
+        image_urls = extract_image_urls(text)
+        
         # If text is very short, just return as a single chunk
-        if len(text) < 500:
+        if len(text) < 500 and not image_urls:
             chunk_type = self.identify_chunk_type(text)
             return [{
                 "text": text,
@@ -539,14 +555,52 @@ class IssueVectorDatabase:
                 }
             }]
         
-        # Choose chunking method based on configuration
+        # Create chunks list to hold all results
+        chunks = []
+        
+        # Process any images found in the text and add them as separate chunks
+        if image_urls:
+            try:
+                print(f"Processing {len(image_urls)} images in issue #{issue_number}")
+                
+                # Base metadata for images
+                base_metadata = {
+                    "issue_number": issue_number,
+                    "issue_title": issue_data.get("title", ""),
+                    "state": issue_data.get("state", ""),
+                    "author": issue_data.get("author", ""),
+                    "labels": ",".join(issue_data.get("labels", [])),
+                    "created_at": issue_data.get("created_at", "")
+                }
+                
+                # Process images in the issue using the image recognition module
+                image_chunks = process_issue_images(
+                    issue_number=issue_number,
+                    issue_title=issue_data.get("title", ""),
+                    issue_body=text,
+                    metadata=base_metadata,
+                    provider="azure",  # Use Azure OpenAI by default
+                    max_context_length=1000,  # Context length around each image
+                    endpoint=self.azure_endpoint,
+                    deployment=self.azure_vision_deployment, 
+                    api_key=self.openai_api_key if not self.use_azure_openai else None  # Only pass API key in non-Azure mode
+                )
+                
+                # Add image chunks to our chunk collection
+                if image_chunks:
+                    chunks.extend(image_chunks)
+                    print(f"Added {len(image_chunks)} image description chunks for issue #{issue_number}")
+                
+            except Exception as e:
+                print(f"Error processing images in issue #{issue_number}: {str(e)}")
+        
+        # Choose chunking method based on configuration for the text content
         if self.use_llm_chunking:
             segments = self.llm_segment_text(text)
         else:
             segments = self.pattern_based_segment_text(text)
         
         # Create properly formatted chunks with metadata
-        chunks = []
         for i, segment in enumerate(segments):
             chunk_id = str(uuid.uuid4())
             chunks.append({
@@ -1016,52 +1070,122 @@ Return your response as a JSON object with a 'segments' array, where each elemen
             
     def pattern_based_segment_text(self, text: str) -> List[Dict[str, Any]]:
         """
-        Legacy method using pattern matching to segment text.
-        This is used as a fallback when LLM segmentation fails.
+        Segment text into semantic chunks using pattern-based approach.
+        Preserves image references and their surrounding context.
         
         Args:
             text: The text to segment
             
         Returns:
-            List of dictionaries with segment info
+            List of segment dictionaries with text and type
         """
         # Find semantic boundaries
         boundaries = self.identify_semantic_boundaries(text)
         
-        # If no boundaries or text is short enough, return as single chunk
-        if not boundaries or len(text) < self.max_tokens_per_chunk:
-            return [{
-                "text": text,
-                "type": self.identify_chunk_type(text)
-            }]
+        # If no boundaries found, check if text is too long
+        if not boundaries:
+            if len(self._simple_tokenize(text)) > self.max_tokens_per_chunk:
+                # Split by paragraphs
+                paragraphs = text.split("\n\n")
+                segments = []
+                current_segment = ""
+                for paragraph in paragraphs:
+                    # Check if adding this paragraph would exceed token limit
+                    if len(self._simple_tokenize(current_segment + paragraph)) > self.max_tokens_per_chunk:
+                        if current_segment:  # Only add if we have content
+                            segments.append({
+                                "text": current_segment,
+                                "type": self.identify_chunk_type(current_segment)
+                            })
+                            current_segment = paragraph + "\n\n"
+                        else:
+                            # Paragraph itself is too long, split it further
+                            segments.append({
+                                "text": paragraph,
+                                "type": self.identify_chunk_type(paragraph)
+                            })
+                    else:
+                        current_segment += paragraph + "\n\n"
+                
+                # Add the last segment if any
+                if current_segment:
+                    segments.append({
+                        "text": current_segment,
+                        "type": self.identify_chunk_type(current_segment)
+                    })
+                
+                return segments
+            else:
+                # Text is small enough to be a single chunk
+                return [{
+                    "text": text,
+                    "type": self.identify_chunk_type(text)
+                }]
         
-        # Add start and end positions
-        positions = [0] + boundaries + [len(text)]
-        positions = sorted(list(set(positions)))  # Remove duplicates and sort
-        
+        # Create segments based on semantic boundaries
         segments = []
-        for i in range(len(positions) - 1):
-            start = max(0, positions[i])
-            end = min(len(text), positions[i + 1])
+        start_pos = 0
+        
+        for boundary in boundaries:
+            # Check if we should split at this boundary
+            if boundary - start_pos > 50:  # Only create chunks that have meaningful content
+                segment_text = text[start_pos:boundary].strip()
+                
+                # Only add non-empty segments
+                if segment_text:
+                    # Check for image references in this segment
+                    has_image = bool(extract_image_urls(segment_text))
+                    
+                    # Determine chunk type
+                    chunk_type = self.identify_chunk_type(segment_text)
+                    
+                    # Mark if this is an image chunk
+                    if has_image:
+                        chunk_type = "image_content" if chunk_type == "description" else f"{chunk_type}_with_image"
+                    
+                    segments.append({
+                        "text": segment_text,
+                        "type": chunk_type
+                    })
             
-            # Skip if chunk is too small
-            if end - start < 50:
-                continue
-            
-            # Extract the chunk text
-            chunk_text = text[start:end].strip()
-            
-            # Skip empty chunks
-            if not chunk_text:
-                continue
-            
-            # Identify the chunk type
-            chunk_type = self.identify_chunk_type(chunk_text)
-            
-            segments.append({
-                "text": chunk_text,
-                "type": chunk_type
-            })
+            start_pos = boundary
+        
+        # Add the final segment if needed
+        if start_pos < len(text):
+            final_segment = text[start_pos:].strip()
+            if final_segment:
+                # Check for image references in this segment
+                has_image = bool(extract_image_urls(final_segment))
+                
+                # Determine chunk type
+                chunk_type = self.identify_chunk_type(final_segment)
+                
+                # Mark if this is an image chunk
+                if has_image:
+                    chunk_type = "image_content" if chunk_type == "description" else f"{chunk_type}_with_image"
+                
+                segments.append({
+                    "text": final_segment,
+                    "type": chunk_type
+                })
+        
+        # Merge very small segments with their neighbors
+        if len(segments) > 1:
+            i = 0
+            while i < len(segments) - 1:
+                current_len = len(self._simple_tokenize(segments[i]["text"]))
+                
+                # Skip processing segments with images - keep them separate
+                if "image" in segments[i]["type"] or "image" in segments[i+1]["type"]:
+                    i += 1
+                    continue
+                
+                # If current segment is very small, merge with next
+                if current_len < 50:
+                    segments[i+1]["text"] = segments[i]["text"] + "\n" + segments[i+1]["text"]
+                    segments.pop(i)
+                else:
+                    i += 1
         
         return segments
     
@@ -1190,6 +1314,8 @@ def main():
                       help="Azure OpenAI endpoint URL (optional if set as environment variable AZURE_OPENAI_ENDPOINT)")
     parser.add_argument("--azure-deployment", type=str,
                       help="Azure OpenAI deployment name for embeddings (optional if set as environment variable AZURE_OPENAI_DEPLOYMENT)")
+    parser.add_argument("--azure-vision-deployment", type=str,
+                      help="Azure OpenAI deployment name for vision/chat models (optional if set as environment variable AZURE_OPENAI_VISION_DEPLOYMENT)")
     
     args = parser.parse_args()
     
@@ -1203,6 +1329,7 @@ def main():
         use_azure_openai=args.use_azure_openai,
         azure_endpoint=args.azure_endpoint,
         azure_deployment=args.azure_deployment,
+        azure_vision_deployment=args.azure_vision_deployment,
         use_llm_chunking=args.use_llm_chunking
     )
     
