@@ -4,6 +4,7 @@ import json
 import re
 import requests
 import traceback
+import chromadb
 from urllib.parse import urlparse
 from azure.identity import DefaultAzureCredential
 from langchain_openai import AzureChatOpenAI
