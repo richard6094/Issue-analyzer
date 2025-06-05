@@ -25,6 +25,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from LLM.llm_provider import get_llm
 from RAG.rag_helper import default_rag_helper
 from image_recognition.image_recognition_provider import get_image_recognition_model, analyze_image
+from langchain_core.messages import HumanMessage
 
 # Configure logging
 logging.basicConfig(
@@ -204,10 +205,9 @@ Please respond with a JSON object containing:
 }}
 
 Focus on being helpful and selecting tools that will provide the most value for understanding and resolving this specific issue.
-"""              # Get LLM decision using Azure OpenAI
-            llm = get_llm(provider="azure", temperature=0.1)
-            response = await llm.agenerate([assessment_prompt])
-            # Handle both old and new LangChain response formats
+"""              # Get LLM decision using Azure OpenAI            llm = get_llm(provider="azure", temperature=0.1)
+            response = await llm.agenerate([[HumanMessage(content=assessment_prompt)]])
+            # Handle LangChain agenerate response format
             if hasattr(response.generations[0][0], 'text'):
                 response_text = response.generations[0][0].text
             elif hasattr(response.generations[0][0], 'message') and hasattr(response.generations[0][0].message, 'content'):
@@ -393,10 +393,9 @@ Consider:
 2. Are there gaps in our understanding?
 3. Would additional tools provide significant value?
 """
-            
             llm = get_llm(provider="azure", temperature=0.1)
-            response = await llm.agenerate([analysis_prompt])
-            # Handle both old and new LangChain response formats
+            response = await llm.agenerate([[HumanMessage(content=analysis_prompt)]])
+            # Handle LangChain agenerate response format
             if hasattr(response.generations[0][0], 'text'):
                 response_text = response.generations[0][0].text
             elif hasattr(response.generations[0][0], 'message') and hasattr(response.generations[0][0].message, 'content'):
@@ -512,10 +511,9 @@ Provide a comprehensive analysis and recommendations. Respond with a JSON object
 
 Make your analysis helpful, actionable, and professional. The user_comment should provide real value to the issue creator.
 """
-            
             llm = get_llm(provider="azure", temperature=0.1)
-            response = await llm.agenerate([final_analysis_prompt])
-            # Handle both old and new LangChain response formats
+            response = await llm.agenerate([[HumanMessage(content=final_analysis_prompt)]])
+            # Handle LangChain agenerate response format
             if hasattr(response.generations[0][0], 'text'):
                 response_text = response.generations[0][0].text
             elif hasattr(response.generations[0][0], 'message') and hasattr(response.generations[0][0].message, 'content'):
