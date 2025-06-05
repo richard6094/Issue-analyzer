@@ -1,0 +1,119 @@
+name: Intelligent AI-Driven Issue Dispatcher
+
+on:
+  issues:
+    types: [opened, edited, labeled, unlabeled]
+  issue_comment:
+    types: [created, edited, deleted]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: 'Issue number to process'
+        required: false
+        type: string
+      force_analysis:
+        description: 'Force re-analysis even if already processed'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  intelligent_dispatch:
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' || 
+      (github.event_name == 'issues' && contains(fromJson('["opened", "edited", "labeled", "unlabeled"]'), github.event.action)) ||
+      (github.event_name == 'issue_comment' && contains(fromJson('["created", "edited", "deleted"]'), github.event.action))
+    
+    permissions:
+      issues: write
+      contents: read
+      id-token: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install azure-identity requests
+          pip install langchain_openai langchain_core
+          pip install chromadb
+          pip install aiohttp flask pydantic
+          pip install jinja2 markupsafe
+
+      - name: Run Intelligent AI Dispatcher
+        id: intelligent_dispatch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_ACTION: ${{ github.event.action }}
+          ISSUE_NUMBER: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.issue_number || (github.event_name == 'issue_comment' && github.event.issue.number) || github.event.issue.number || '' }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          REPO_FULL_NAME: ${{ github.repository }}
+          SENDER_LOGIN: ${{ github.event.sender.login }}
+          SENDER_TYPE: ${{ github.event.sender.type }}
+          FORCE_ANALYSIS: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force_analysis || 'false' }}
+          # Azure OpenAI Configuration
+          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_API_VERSION: ${{ secrets.AZURE_OPENAI_API_VERSION }}
+          AZURE_OPENAI_DEPLOYMENT_NAME: ${{ secrets.AZURE_OPENAI_DEPLOYMENT_NAME }}
+          # Optional: OpenAI fallback
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          echo "🚀 Starting Intelligent AI-Driven Issue Analysis..."
+          echo "📋 Issue Number: $ISSUE_NUMBER"
+          echo "🎯 Event: $GITHUB_EVENT_NAME ($GITHUB_EVENT_ACTION)"
+          echo "📦 Repository: $REPO_FULL_NAME"
+          echo "👤 Sender: $SENDER_LOGIN"
+          echo ""
+          echo "🧠 Using LLM-driven intelligent decision making system..."
+          echo "🔧 This system analyzes issues and selects optimal tools dynamically"
+          echo "🎯 Similar to GitHub Copilot - AI decides what tools to use"
+          echo ""
+          python scripts/intelligent_dispatch_action.py
+
+      - name: Upload Intelligent Analysis Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: intelligent-dispatch-results-${{ github.run_id }}
+          path: |
+            intelligent_dispatch_results.json
+            *.log
+          retention-days: 30
+
+      - name: Summary Report
+        if: always()
+        run: |
+          echo "## 🎯 Intelligent Analysis Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The AI-driven dispatcher has analyzed the issue using intelligent decision making:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🧠 Key Features:" >> $GITHUB_STEP_SUMMARY
+          echo "- **LLM-driven tool selection**: AI chooses the most relevant analysis tools" >> $GITHUB_STEP_SUMMARY
+          echo "- **Dynamic workflow**: No fixed execution order, adapts to issue content" >> $GITHUB_STEP_SUMMARY
+          echo "- **Intelligent reasoning**: Each decision is backed by AI analysis" >> $GITHUB_STEP_SUMMARY
+          echo "- **Resource optimization**: Only runs necessary tools, saves time and costs" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Results:" >> $GITHUB_STEP_SUMMARY
+          echo "Check the uploaded artifacts for detailed analysis results and decision logs." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*Powered by AI-driven intelligent decision making system*" >> $GITHUB_STEP_SUMMARY
