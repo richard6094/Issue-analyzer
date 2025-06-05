@@ -204,11 +204,16 @@ Please respond with a JSON object containing:
 }}
 
 Focus on being helpful and selecting tools that will provide the most value for understanding and resolving this specific issue.
-"""
-              # Get LLM decision using Azure OpenAI
+"""              # Get LLM decision using Azure OpenAI
             llm = get_llm(provider="azure", temperature=0.1)
             response = await llm.agenerate([assessment_prompt])
-            response_text = response.generations[0][0].text
+            # Handle both old and new LangChain response formats
+            if hasattr(response.generations[0][0], 'text'):
+                response_text = response.generations[0][0].text
+            elif hasattr(response.generations[0][0], 'message') and hasattr(response.generations[0][0].message, 'content'):
+                response_text = response.generations[0][0].message.content
+            else:
+                response_text = str(response.generations[0][0])
             
             # Parse LLM response
             try:
@@ -391,7 +396,13 @@ Consider:
             
             llm = get_llm(provider="azure", temperature=0.1)
             response = await llm.agenerate([analysis_prompt])
-            response_text = response.generations[0][0].text
+            # Handle both old and new LangChain response formats
+            if hasattr(response.generations[0][0], 'text'):
+                response_text = response.generations[0][0].text
+            elif hasattr(response.generations[0][0], 'message') and hasattr(response.generations[0][0].message, 'content'):
+                response_text = response.generations[0][0].message.content
+            else:
+                response_text = str(response.generations[0][0])
             
             try:
                 analysis_data = json.loads(response_text)
@@ -504,7 +515,13 @@ Make your analysis helpful, actionable, and professional. The user_comment shoul
             
             llm = get_llm(provider="azure", temperature=0.1)
             response = await llm.agenerate([final_analysis_prompt])
-            response_text = response.generations[0][0].text
+            # Handle both old and new LangChain response formats
+            if hasattr(response.generations[0][0], 'text'):
+                response_text = response.generations[0][0].text
+            elif hasattr(response.generations[0][0], 'message') and hasattr(response.generations[0][0].message, 'content'):
+                response_text = response.generations[0][0].message.content
+            else:
+                response_text = str(response.generations[0][0])
             
             try:
                 final_analysis = json.loads(response_text)
