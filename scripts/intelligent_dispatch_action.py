@@ -205,7 +205,10 @@ Please respond with a JSON object containing:
 }}
 
 Focus on being helpful and selecting tools that will provide the most value for understanding and resolving this specific issue.
-"""              # Get LLM decision using Azure OpenAI            llm = get_llm(provider="azure", temperature=0.1)
+"""
+            
+            # Get LLM decision using Azure OpenAI
+            llm = get_llm(provider="azure", temperature=0.1)
             response = await llm.agenerate([[HumanMessage(content=assessment_prompt)]])
             # Handle LangChain agenerate response format
             if hasattr(response.generations[0][0], 'text'):
