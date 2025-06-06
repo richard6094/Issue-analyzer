@@ -10,7 +10,19 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import chromadb
 from chromadb.utils import embedding_functions
-from chromadb.errors import NotFoundError
+
+# Import NotFoundError with fallback for compatibility
+try:
+    from chromadb.errors import NotFoundError
+except ImportError:
+    # Fallback for older versions of ChromaDB where NotFoundError might not exist
+    # or has different import path
+    try:
+        from chromadb.api.types import NotFoundError
+    except ImportError:
+        # Create a custom exception if neither import works
+        class NotFoundError(Exception):
+            pass
 
 # Import the embedding module
 from embeddings.azure_openai_embedding import AzureOpenAIEmbedding
@@ -251,18 +263,18 @@ def query_database(
         embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
             model_name="all-MiniLM-L6-v2"
         )
-    
-    # Get collection (enhanced error handling)
+      # Get collection (enhanced error handling)
     try:
         collection = client.get_collection(
             name=collection_name,
             embedding_function=embedding_function
         )
-    except (ValueError, NotFoundError):
+    except (ValueError, NotFoundError, Exception) as e:
         # List available collections
         available_collections = list_available_collections(db_path)
         
-        print(f"Error: Collection '{collection_name}' does not exist.")
+        print(f"Error: Collection '{collection_name}' does not exist or cannot be accessed.")
+        print(f"Error details: {str(e)}")
         if available_collections:
             print(f"Available collections: {', '.join([c.name for c in available_collections])}")
         else:
