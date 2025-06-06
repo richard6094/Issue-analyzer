@@ -1,13 +1,5 @@
 # GitHub Issue Agent Intelligent Dispatcher - Dependencies
 
-# Core async HTTP
-aiohttp==3.9.1
-asyncio-throttle==1.0.2
-
-# GitHub API and webhook handling
-pygithub==2.1.1
-cryptography==41.0.8
-
 # LLM and AI providers
 openai==1.6.1
 langchain==0.1.0
