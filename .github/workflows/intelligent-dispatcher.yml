@@ -35,10 +35,30 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Setup Python with cache
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: 'analyzer-core/requirements.txt'
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('analyzer-core/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Cache Python packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/lib/python3.11/site-packages
+            ~/.local/bin
+          key: ${{ runner.os }}-python-packages-${{ hashFiles('analyzer-core/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-python-packages-
 
       - name: Azure Login
         uses: azure/login@v1
@@ -47,14 +67,32 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Install dependencies
+      - name: Install dependencies with cache optimization
         run: |
+          echo "🔧 Installing Python dependencies with caching..."
           python -m pip install --upgrade pip
-          pip install azure-identity requests
-          pip install langchain_openai langchain_core
-          pip install chromadb
-          pip install aiohttp flask pydantic
-          pip install jinja2 markupsafe
+          
+          # Check if requirements.txt exists and install from it
+          if [ -f analyzer-core/requirements.txt ]; then
+            echo "📦 Installing from requirements.txt..."
+            pip install --user -r analyzer-core/requirements.txt
+          else
+            echo "📦 Installing fallback dependencies..."
+            # Fallback to manual installation with --user flag for better caching
+            pip install --user azure-identity requests
+            pip install --user langchain_openai langchain_core
+            pip install --user chromadb
+            pip install --user aiohttp pydantic
+          fi
+            echo "✅ Dependencies installed successfully"
+
+      - name: Verify environment and cache status
+        run: |
+          echo "🔍 Environment verification:"
+          echo "Python version: $(python --version)"
+          echo "Pip cache dir: $(pip cache dir)"
+          echo "Python packages location:"
+          ls -la ~/.local/lib/python3.11/site-packages/ 2>/dev/null | head -10 || echo "  No cached packages found"
 
       - name: Run Intelligent AI Dispatcher
         id: intelligent_dispatch
@@ -82,11 +120,13 @@ jobs:
           echo "🎯 Event: $GITHUB_EVENT_NAME ($GITHUB_EVENT_ACTION)"
           echo "📦 Repository: $REPO_FULL_NAME"
           echo "👤 Sender: $SENDER_LOGIN"
-          echo ""
           echo "🧠 Using LLM-driven intelligent decision making system..."
           echo "🔧 This system analyzes issues and selects optimal tools dynamically"
           echo "🎯 Similar to GitHub Copilot - AI decides what tools to use"
           echo ""
+          # Add Python user site-packages to PATH for cached packages
+          export PATH="$HOME/.local/bin:$PATH"
+          export PYTHONPATH="$HOME/.local/lib/python3.11/site-packages:$PYTHONPATH"
           python scripts/intelligent_dispatch_action.py
 
       - name: Upload Intelligent Analysis Results
@@ -98,22 +138,3 @@ jobs:
             intelligent_dispatch_results.json
             *.log
           retention-days: 30
-
-      - name: Summary Report
-        if: always()
-        run: |
-          echo "## 🎯 Intelligent Analysis Complete" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "The AI-driven dispatcher has analyzed the issue using intelligent decision making:" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🧠 Key Features:" >> $GITHUB_STEP_SUMMARY
-          echo "- **LLM-driven tool selection**: AI chooses the most relevant analysis tools" >> $GITHUB_STEP_SUMMARY
-          echo "- **Dynamic workflow**: No fixed execution order, adapts to issue content" >> $GITHUB_STEP_SUMMARY
-          echo "- **Intelligent reasoning**: Each decision is backed by AI analysis" >> $GITHUB_STEP_SUMMARY
-          echo "- **Resource optimization**: Only runs necessary tools, saves time and costs" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📊 Results:" >> $GITHUB_STEP_SUMMARY
-          echo "Check the uploaded artifacts for detailed analysis results and decision logs." >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "---" >> $GITHUB_STEP_SUMMARY
-          echo "*Powered by AI-driven intelligent decision making system*" >> $GITHUB_STEP_SUMMARY
