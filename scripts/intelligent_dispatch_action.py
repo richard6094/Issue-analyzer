@@ -13,6 +13,7 @@ import sys
 import json
 import asyncio
 import logging
+import re
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 from enum import Enum
@@ -104,10 +105,8 @@ class IntelligentGitHubDispatcher:
         
         # Initialize results storage
         self.analysis_context = {
-            "timestamp": datetime.utcnow().isoformat(),
-            "issue_data": {},
-            "decision_history": [],
-            "tool_results": [],
+            "timestamp": datetime.utcnow().isoformat(),        "issue_data": {},
+            "decision_history": [],            "tool_results": [],
             "final_analysis": {},
             "actions_taken": []
         }
@@ -148,8 +147,7 @@ class IntelligentGitHubDispatcher:
             # Step 5: Generate final analysis and recommendations
             final_analysis = await self._generate_final_analysis(issue_data, self.analysis_context["tool_results"])
             self.analysis_context["final_analysis"] = final_analysis
-            
-            # Step 6: Take actions based on analysis
+              # Step 6: Take actions based on analysis
             actions_taken = await self._take_intelligent_actions(final_analysis)
             self.analysis_context["actions_taken"] = actions_taken
             
@@ -173,15 +171,40 @@ class IntelligentGitHubDispatcher:
         try:
             logger.info("Making initial assessment with LLM...")
             
+            # Assess user provided information first
+            user_info_assessment = self._assess_user_provided_information(issue_data)
+            
             # Prepare the issue context
             issue_context = self._prepare_issue_context(issue_data)
             
             # Create tool descriptions for the LLM
             tool_descriptions = self._get_tool_descriptions()
-            
-            # LLM prompt for initial assessment
+              # Enhanced LLM prompt for initial assessment (based on PROMPT_IMPROVEMENT_PROPOSAL)
             assessment_prompt = f"""
-You are an intelligent GitHub issue analyst. Your task is to analyze the given issue and decide which tools would be most helpful to understand and resolve it.
+You are an intelligent GitHub issue analyst. Your primary responsibility is to analyze issues accurately while respecting information already provided by users.
+
+## CRITICAL GUIDELINES - READ CAREFULLY:
+
+### 1. USER INFORMATION RECOGNITION
+Before selecting any tools, you MUST first identify what information the user has ALREADY PROVIDED:
+
+**Check for Existing Information:**
+- **Code Samples**: Look for code blocks (```), function definitions, class declarations
+- **Reproduction Steps**: Look for numbered steps, "how to reproduce", step-by-step instructions
+- **Error Messages**: Look for stack traces, console outputs, error logs
+- **Screenshots/Images**: Look for image links, attachments, visual content
+- **Environment Details**: Look for version numbers, browser info, system specifications
+
+### 2. INFORMATION COMPLETENESS ASSESSMENT
+Evaluate what the user has provided:
+- **COMPLETE**: User provided comprehensive information for diagnosis
+- **PARTIAL**: User provided some information but key details are missing
+- **INSUFFICIENT**: User provided minimal information, significant gaps exist
+
+### 3. TOOL SELECTION PRINCIPLES
+- **NEVER** request information the user has already provided
+- **PRIORITIZE** tools that work with existing information
+- **ONLY** suggest information requests for genuinely missing critical data
 
 ## Issue Context:
 {issue_context}
@@ -189,22 +212,33 @@ You are an intelligent GitHub issue analyst. Your task is to analyze the given i
 ## Available Tools:
 {tool_descriptions}
 
-## Your Task:
-Analyze this issue and decide which tools would be most helpful. Consider:
-1. What type of problem is this? (bug, feature request, question, etc.)
-2. What information would be most valuable to gather?
-3. Which tools would provide that information?
-4. What is the priority of each tool?
+## Your Analysis Task:
 
-Please respond with a JSON object containing:
+**Step 1: Information Inventory**
+First, create an inventory of what the user has already provided.
+
+**Step 2: Gap Analysis**  
+Identify what critical information is genuinely missing.
+
+**Step 3: Tool Selection**
+Select tools that will provide maximum value without redundancy.
+
+## Response Format:
 {{
-    "reasoning": "Your detailed reasoning about the issue and why you chose these tools",
-    "selected_tools": ["tool1", "tool2", ...],  // Array of tool names from the available tools
+    "provided_information": {{
+        "has_code_samples": true/false,
+        "has_reproduction_steps": true/false,
+        "has_error_messages": true/false,
+        "has_screenshots": true/false,
+        "completeness_level": "complete|partial|insufficient"
+    }},
+    "reasoning": "Your detailed reasoning about the issue and tool selection based on existing information",
+    "selected_tools": ["tool1", "tool2", ...],
     "expected_outcome": "What you expect to learn from these tools",
-    "priority": 1  // 1=high, 2=medium, 3=low
+    "priority": 1
 }}
 
-Focus on being helpful and selecting tools that will provide the most value for understanding and resolving this specific issue.
+**REMEMBER**: Your goal is to be helpful while respecting the user's time and the information they've already provided.
 """
             
             # Get LLM decision using Azure OpenAI
@@ -229,8 +263,12 @@ Focus on being helpful and selecting tools that will provide the most value for 
                     expected_outcome=decision_data.get("expected_outcome", ""),
                     priority=decision_data.get("priority", 1)
                 )
+                  # Store the user information assessment in the decision for later use
+                if hasattr(decision, 'user_info_assessment'):
+                    decision.user_info_assessment = user_info_assessment
                 
                 logger.info(f"LLM selected {len(selected_tools)} tools: {[tool.value for tool in selected_tools]}")
+                logger.info(f"User info completeness: {user_info_assessment['completeness_level']}")
                 return decision
                 
             except (json.JSONDecodeError, ValueError) as e:
@@ -243,19 +281,22 @@ Focus on being helpful and selecting tools that will provide the most value for 
             return self._fallback_tool_selection(issue_data)
 
     def _prepare_issue_context(self, issue_data: Dict[str, Any]) -> str:
-        """Prepare issue context for LLM analysis"""
+        """Prepare issue context for LLM analysis with smart content management"""
         title = issue_data.get('title', 'No title')
-        body = issue_data.get('body', 'No description')[:1000]  # Limit length
+        body = issue_data.get('body', 'No description')
         labels = [label.get('name', '') for label in issue_data.get('labels', [])]
         comments_count = issue_data.get('comments', 0)
         
-        # Check for images
+        # Check for images and base64 data
         has_images = self._has_images_in_text(body)
+        
+        # Smart content truncation to manage token limits
+        processed_body = self._smart_content_truncation(body, max_tokens=800)
         
         context = f"""
 **Title:** {title}
 
-**Description:** {body}
+**Description:** {processed_body}
 
 **Labels:** {', '.join(labels) if labels else 'None'}
 
@@ -266,6 +307,123 @@ Focus on being helpful and selecting tools that will provide the most value for 
 **Event Type:** {self.event_name} - {self.event_action}
 """
         return context
+
+    def _smart_content_truncation(self, content: str, max_tokens: int = 800) -> str:
+        """
+        Intelligently truncate content while preserving important information
+        
+        Priority preservation order:
+        1. Issue title and initial description
+        2. Reproduction steps
+        3. Error messages
+        4. Code samples (truncated)
+        5. Remove base64 data
+        6. Remove redundant content
+        """
+        if not content:
+            return content
+            
+        # Rough token estimation (4 chars = 1 token)
+        estimated_tokens = len(content) // 4
+        if estimated_tokens <= max_tokens:
+            return content
+            
+        lines = content.split('\n')
+        processed_lines = []
+        current_estimated_tokens = 0
+        
+        # Phase 1: Identify and preserve critical sections
+        critical_sections = self._identify_critical_sections(lines)
+        
+        # Phase 2: Add content by priority
+        for section_type in ['description', 'reproduction_steps', 'error_messages', 'code_blocks']:
+            if section_type in critical_sections:
+                section_lines = critical_sections[section_type]
+                
+                if section_type == 'code_blocks':
+                    # Truncate code blocks if too long
+                    for line in section_lines:
+                        if current_estimated_tokens + len(line) // 4 < max_tokens:
+                            processed_lines.append(line)
+                            current_estimated_tokens += len(line) // 4
+                        else:
+                            processed_lines.append("... [Code sample truncated for analysis] ...")
+                            break
+                else:
+                    # Add other sections fully if they fit
+                    section_content = '\n'.join(section_lines)
+                    if current_estimated_tokens + len(section_content) // 4 < max_tokens:
+                        processed_lines.extend(section_lines)
+                        current_estimated_tokens += len(section_content) // 4
+                    else:
+                        break
+        
+        # Phase 3: Handle base64 data
+        if 'base64_data' in critical_sections:
+            processed_lines.append("[Base64 data provided by user - available for analysis]")
+            current_estimated_tokens += 10
+        
+        result = '\n'.join(processed_lines)
+        return result if result else content[:max_tokens * 4]  # Fallback
+
+    def _identify_critical_sections(self, lines: List[str]) -> Dict[str, List[str]]:
+        """
+        Identify critical sections in the content
+        """
+        sections = {
+            'description': [],
+            'reproduction_steps': [],
+            'error_messages': [],
+            'code_blocks': [],
+            'base64_data': [],
+            'other': []
+        }
+        
+        current_section = 'description'
+        in_code_block = False
+        
+        for line in lines:
+            line_lower = line.lower()
+            
+            # Detect code blocks
+            if '```' in line:
+                in_code_block = not in_code_block
+                current_section = 'code_blocks' if in_code_block else 'description'
+                sections[current_section].append(line)
+                continue
+            
+            if in_code_block:
+                sections['code_blocks'].append(line)
+                continue
+            
+            # Detect base64 data
+            if re.search(r'data:image/[^;]+;base64,', line) or \
+               re.search(r'[A-Za-z0-9+/]{50,}={0,2}', line):
+                sections['base64_data'].append(line)
+                continue
+            
+            # Detect reproduction steps
+            if any(indicator in line_lower for indicator in [
+                'steps to reproduce', 'reproduction steps', 'how to reproduce',
+                'to reproduce:', 'step 1', 'step 2'
+            ]):
+                current_section = 'reproduction_steps'
+                sections[current_section].append(line)
+                continue
+            
+            # Detect error messages
+            if any(indicator in line_lower for indicator in [
+                'error:', 'exception:', 'traceback', 'stack trace',
+                'console.error', 'throw', 'failed with'
+            ]):
+                current_section = 'error_messages'
+                sections[current_section].append(line)
+                continue
+            
+            # Add to current section
+            sections[current_section].append(line)
+        
+        return sections
 
     def _get_tool_descriptions(self) -> str:
         """Get descriptions of available tools for LLM"""
@@ -365,36 +523,61 @@ Focus on being helpful and selecting tools that will provide the most value for 
         try:
             # Prepare results summary for LLM
             results_summary = self._prepare_results_summary(tool_results)
-            issue_context = self._prepare_issue_context(issue_data)
-            
+            issue_context = self._prepare_issue_context(issue_data)            # Enhanced LLM prompt for tool results analysis (based on PROMPT_IMPROVEMENT_PROPOSAL)
             analysis_prompt = f"""
-You are analyzing the results from tools that were executed to understand a GitHub issue.
+You are analyzing tool execution results for a GitHub issue. Your task is to determine if additional tools are needed while avoiding redundant information requests.
 
-## Original Issue:
+## ANALYSIS PRINCIPLES:
+
+### 1. INFORMATION SUFFICIENCY CHECK
+- Can we provide a meaningful response with current information?
+- Are there critical gaps that genuinely require additional data?
+- Would additional tools significantly improve our analysis quality?
+
+### 2. REDUNDANCY AVOIDANCE
+- **NEVER** request tools that would ask for information already available
+- **NEVER** suggest gathering information the user has already provided
+- **FOCUS** on tools that analyze existing data rather than request new data
+
+### 3. VALUE ASSESSMENT
+- Will additional tools provide actionable insights?
+- Is the potential benefit worth the computational cost?
+- Are we approaching sufficient information for a helpful response?
+
+## Current Analysis Context:
+
+### Original Issue:
 {issue_context}
 
-## Tool Results:
+### Tool Execution Results:
 {results_summary}
 
-## Available Additional Tools:
+### Available Additional Tools:
 {self._get_tool_descriptions()}
 
-## Your Task:
-Based on the tool results, determine if we need additional information to properly understand and address this issue.
+## Decision Framework:
 
-Please respond with a JSON object:
+**CONTINUE ANALYSIS IF:**
+- Critical technical gaps exist that prevent proper diagnosis
+- Additional tools would significantly improve solution quality
+- Current information is genuinely insufficient for helpful response
+
+**STOP ANALYSIS IF:**
+- We have sufficient information for meaningful guidance
+- Additional tools would only provide marginal value
+- Risk of redundant information requests exists
+
+## Response Format:
 {{
     "needs_more_tools": true/false,
-    "reasoning": "Your reasoning about whether more tools are needed",
+    "reasoning": "Detailed reasoning about information sufficiency and tool necessity",
     "selected_tools": ["tool1", "tool2", ...],  // Only if needs_more_tools is true
-    "expected_outcome": "What you expect to learn",  // Only if needs_more_tools is true
-    "priority": 1  // 1=high, 2=medium, 3=low
+    "expected_outcome": "What additional value these tools will provide",
+    "priority": 1,
+    "sufficiency_assessment": "complete|partial|insufficient"
 }}
 
-Consider:
-1. Do we have enough information to provide a helpful response?
-2. Are there gaps in our understanding?
-3. Would additional tools provide significant value?
+Focus on providing maximum value while respecting the user's time and existing contributions.
 """
             llm = get_llm(provider="azure", temperature=0.1)
             response = await llm.agenerate([[HumanMessage(content=analysis_prompt)]])
@@ -480,27 +663,53 @@ Consider:
         """
         try:
             issue_context = self._prepare_issue_context(issue_data)
-            results_summary = self._prepare_results_summary(tool_results)
-            
+            results_summary = self._prepare_results_summary(tool_results)            # Enhanced LLM prompt for final analysis (based on PROMPT_IMPROVEMENT_PROPOSAL)
             final_analysis_prompt = f"""
-You are a senior GitHub issue analyst. Based on the issue and the tool analysis results, provide a comprehensive analysis and actionable recommendations.
+You are a senior GitHub issue analyst providing comprehensive analysis and actionable recommendations.
 
-## Original Issue:
+## RESPONSE GUIDELINES:
+
+### 1. ACKNOWLEDGE USER CONTRIBUTIONS
+- **ALWAYS** acknowledge what the user has provided
+- **REFERENCE** specific code samples, reproduction steps, or data they shared
+- **SHOW** that you understand their effort in providing detailed information
+
+### 2. ANALYSIS BASED ON PROVIDED INFORMATION
+- Analyze the user's code samples, reproduction steps, and data
+- Provide insights based on what they've actually shared
+- Avoid generic responses that ignore their specific details
+
+### 3. AVOID REDUNDANT REQUESTS
+- **NEVER** ask for information the user has already provided
+- **BUILD** upon their existing contributions
+- **ENHANCE** their understanding rather than requesting basics
+
+## Analysis Context:
+
+### Original Issue:
 {issue_context}
 
-## Analysis Results:
+### Analysis Results:
 {results_summary}
 
-## Your Task:
-Provide a comprehensive analysis and recommendations. Respond with a JSON object containing:
+## Response Requirements:
 
+### User Comment Guidelines:
+Your user comment should:
+1. **Start with acknowledgment**: "Thank you for providing [specific details they shared]..."
+2. **Demonstrate understanding**: "Based on your code sample showing [specific detail]..."
+3. **Provide value-added analysis**: "Looking at your reproduction steps, the issue appears to be..."
+4. **Offer actionable next steps**: "To resolve this, I recommend..."
+5. **Reference their specific context**: "Given your environment/code/setup..."
+
+### Response Format:
 {{
     "issue_type": "bug_report|feature_request|question|documentation|regression|security|performance",
     "severity": "low|medium|high|critical",
     "confidence": 0.0-1.0,
-    "summary": "Brief summary of the issue and findings",
-    "detailed_analysis": "Detailed analysis based on tool results",
-    "root_cause": "Likely root cause if identified",
+    "summary": "Brief summary acknowledging user's provided information and key findings",
+    "detailed_analysis": "Detailed analysis based on user's actual contributions and tool results",
+    "root_cause": "Likely root cause based on provided information",
     "recommended_labels": ["label1", "label2", ...],
     "recommended_actions": [
         {{
@@ -509,10 +718,10 @@ Provide a comprehensive analysis and recommendations. Respond with a JSON object
             "priority": 1
         }}
     ],
-    "user_comment": "A helpful comment to post on the issue that synthesizes all findings and provides guidance"
+    "user_comment": "A helpful comment that builds on the user's provided information and offers genuine value"
 }}
 
-Make your analysis helpful, actionable, and professional. The user_comment should provide real value to the issue creator.
+**CRITICAL**: Your response must demonstrate that you've carefully reviewed and understood the user's contributions. Generic responses that ignore their specific details are unacceptable.
 """
             llm = get_llm(provider="azure", temperature=0.1)
             response = await llm.agenerate([[HumanMessage(content=final_analysis_prompt)]])

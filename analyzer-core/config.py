@@ -384,7 +384,7 @@ def setup_logging(config: LoggingConfig) -> None:
 _default_config_manager = None
 
 
-def get_config() -> IntelligentDispatcherConfig:
+def get_config() -> SmartDispatcherConfig:
     """Get the default configuration instance"""
     global _default_config_manager
     
