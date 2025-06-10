@@ -14,6 +14,7 @@ import json
 import asyncio
 import logging
 import re
+import requests
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 from enum import Enum
@@ -251,7 +252,6 @@ Select tools that will provide maximum value without redundancy.
                 response_text = response.generations[0][0].message.content
             else:
                 response_text = str(response.generations[0][0])
-            
             # Parse LLM response
             try:
                 decision_data = json.loads(response_text)
@@ -263,7 +263,7 @@ Select tools that will provide maximum value without redundancy.
                     expected_outcome=decision_data.get("expected_outcome", ""),
                     priority=decision_data.get("priority", 1)
                 )
-                  # Store the user information assessment in the decision for later use
+                # Store the user information assessment in the decision for later use
                 if hasattr(decision, 'user_info_assessment'):
                     decision.user_info_assessment = user_info_assessment
                 
@@ -281,7 +281,7 @@ Select tools that will provide maximum value without redundancy.
             return self._fallback_tool_selection(issue_data)
 
     def _prepare_issue_context(self, issue_data: Dict[str, Any]) -> str:
-        """Prepare issue context for LLM analysis with smart content management"""
+        """Prepare issue context for LLM analysis"""
         title = issue_data.get('title', 'No title')
         body = issue_data.get('body', 'No description')
         labels = [label.get('name', '') for label in issue_data.get('labels', [])]
@@ -290,13 +290,10 @@ Select tools that will provide maximum value without redundancy.
         # Check for images and base64 data
         has_images = self._has_images_in_text(body)
         
-        # Smart content truncation to manage token limits
-        processed_body = self._smart_content_truncation(body, max_tokens=800)
-        
         context = f"""
 **Title:** {title}
 
-**Description:** {processed_body}
+**Description:** {body}
 
 **Labels:** {', '.join(labels) if labels else 'None'}
 
@@ -307,123 +304,6 @@ Select tools that will provide maximum value without redundancy.
 **Event Type:** {self.event_name} - {self.event_action}
 """
         return context
-
-    def _smart_content_truncation(self, content: str, max_tokens: int = 800) -> str:
-        """
-        Intelligently truncate content while preserving important information
-        
-        Priority preservation order:
-        1. Issue title and initial description
-        2. Reproduction steps
-        3. Error messages
-        4. Code samples (truncated)
-        5. Remove base64 data
-        6. Remove redundant content
-        """
-        if not content:
-            return content
-            
-        # Rough token estimation (4 chars = 1 token)
-        estimated_tokens = len(content) // 4
-        if estimated_tokens <= max_tokens:
-            return content
-            
-        lines = content.split('\n')
-        processed_lines = []
-        current_estimated_tokens = 0
-        
-        # Phase 1: Identify and preserve critical sections
-        critical_sections = self._identify_critical_sections(lines)
-        
-        # Phase 2: Add content by priority
-        for section_type in ['description', 'reproduction_steps', 'error_messages', 'code_blocks']:
-            if section_type in critical_sections:
-                section_lines = critical_sections[section_type]
-                
-                if section_type == 'code_blocks':
-                    # Truncate code blocks if too long
-                    for line in section_lines:
-                        if current_estimated_tokens + len(line) // 4 < max_tokens:
-                            processed_lines.append(line)
-                            current_estimated_tokens += len(line) // 4
-                        else:
-                            processed_lines.append("... [Code sample truncated for analysis] ...")
-                            break
-                else:
-                    # Add other sections fully if they fit
-                    section_content = '\n'.join(section_lines)
-                    if current_estimated_tokens + len(section_content) // 4 < max_tokens:
-                        processed_lines.extend(section_lines)
-                        current_estimated_tokens += len(section_content) // 4
-                    else:
-                        break
-        
-        # Phase 3: Handle base64 data
-        if 'base64_data' in critical_sections:
-            processed_lines.append("[Base64 data provided by user - available for analysis]")
-            current_estimated_tokens += 10
-        
-        result = '\n'.join(processed_lines)
-        return result if result else content[:max_tokens * 4]  # Fallback
-
-    def _identify_critical_sections(self, lines: List[str]) -> Dict[str, List[str]]:
-        """
-        Identify critical sections in the content
-        """
-        sections = {
-            'description': [],
-            'reproduction_steps': [],
-            'error_messages': [],
-            'code_blocks': [],
-            'base64_data': [],
-            'other': []
-        }
-        
-        current_section = 'description'
-        in_code_block = False
-        
-        for line in lines:
-            line_lower = line.lower()
-            
-            # Detect code blocks
-            if '```' in line:
-                in_code_block = not in_code_block
-                current_section = 'code_blocks' if in_code_block else 'description'
-                sections[current_section].append(line)
-                continue
-            
-            if in_code_block:
-                sections['code_blocks'].append(line)
-                continue
-            
-            # Detect base64 data
-            if re.search(r'data:image/[^;]+;base64,', line) or \
-               re.search(r'[A-Za-z0-9+/]{50,}={0,2}', line):
-                sections['base64_data'].append(line)
-                continue
-            
-            # Detect reproduction steps
-            if any(indicator in line_lower for indicator in [
-                'steps to reproduce', 'reproduction steps', 'how to reproduce',
-                'to reproduce:', 'step 1', 'step 2'
-            ]):
-                current_section = 'reproduction_steps'
-                sections[current_section].append(line)
-                continue
-            
-            # Detect error messages
-            if any(indicator in line_lower for indicator in [
-                'error:', 'exception:', 'traceback', 'stack trace',
-                'console.error', 'throw', 'failed with'
-            ]):
-                current_section = 'error_messages'
-                sections[current_section].append(line)
-                continue
-            
-            # Add to current section
-            sections[current_section].append(line)
-        
-        return sections
 
     def _get_tool_descriptions(self) -> str:
         """Get descriptions of available tools for LLM"""
@@ -710,10 +590,9 @@ Your user comment should:
     "summary": "Brief summary acknowledging user's provided information and key findings",
     "detailed_analysis": "Detailed analysis based on user's actual contributions and tool results",
     "root_cause": "Likely root cause based on provided information",
-    "recommended_labels": ["label1", "label2", ...],
-    "recommended_actions": [
+    "recommended_labels": ["label1", "label2", ...],    "recommended_actions": [
         {{
-            "action": "add_label|add_comment|assign_user|close_issue|request_info",
+            "action": "add_label|assign_user|close_issue|request_info",
             "details": "Specific details for the action",
             "priority": 1
         }}
@@ -757,8 +636,8 @@ Your user comment should:
                 "confidence": 0.0,
                 "summary": f"Analysis failed: {str(e)}",
                 "user_comment": "I encountered an error while analyzing this issue. Please try again or contact support."
-            }
-
+            }  
+              
     async def _take_intelligent_actions(self, final_analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
         Take actions based on the final analysis
@@ -770,19 +649,45 @@ Your user comment should:
             List of actions taken
         """
         actions_taken = []
+        all_labels_to_add = set()  # Use set to avoid duplicate labels
         
         try:
-            # Add recommended labels
+            # Step 1: Collect all labels (from both recommended_labels and recommended_actions)
             recommended_labels = final_analysis.get("recommended_labels", [])
             if recommended_labels:
-                await self._add_labels_to_issue(recommended_labels)
-                actions_taken.append({
-                    "action": "labels_added",
-                    "details": recommended_labels,
-                    "success": True
-                })
+                all_labels_to_add.update(recommended_labels)
             
-            # Add user comment
+            # Process recommended actions to collect additional labels and other actions
+            recommended_actions = final_analysis.get("recommended_actions", [])
+            non_label_actions = []
+            
+            for action in recommended_actions:
+                action_type = action.get("action", "")
+                action_details = action.get("details", "")
+                
+                if action_type == "add_label" and action_details:
+                    # Collect label for batch addition
+                    if all_labels_to_add:
+                        labels_list = list(all_labels_to_add)
+                        await self._add_labels_to_issue(labels_list)
+                    actions_taken.append({
+                        "action": "label_added", 
+                        "details": action_details,
+                        "success": True
+                    })
+                elif action_type == "add_comment":
+                    # Skip comment actions - we'll use user_comment instead
+                    logger.info("Skipping add_comment action - using main user_comment instead")
+                    actions_taken.append({
+                        "action": "comment_action_merged",
+                        "details": "Comment action merged into main user_comment",
+                        "success": True
+                    })
+                else:
+                    # Other actions (assign_user, close_issue, etc.)
+                    non_label_actions.append(action)
+            
+            # Step 2: Add the main user comment
             user_comment = final_analysis.get("user_comment", "")
             if user_comment:
                 await self._add_comment_to_issue(user_comment)
@@ -792,28 +697,43 @@ Your user comment should:
                     "success": True
                 })
             
-            # Process recommended actions
-            recommended_actions = final_analysis.get("recommended_actions", [])
-            for action in recommended_actions:
+            # Step 3: Execute other non-label, non-comment actions
+            for action in non_label_actions:
                 try:
                     action_type = action.get("action", "")
                     action_details = action.get("details", "")
                     
-                    if action_type == "add_label" and action_details:
-                        await self._add_labels_to_issue([action_details])
+                    if action_type == "assign_user" and action_details:
+                        # TODO: Implement user assignment
+                        logger.info(f"User assignment not yet implemented: {action_details}")
                         actions_taken.append({
-                            "action": "label_added",
-                            "details": action_details,
+                            "action": "assign_user_pending",
+                            "details": f"Assignment to {action_details} - not yet implemented",
+                            "success": False
+                        })
+                    elif action_type == "close_issue":
+                        # TODO: Implement issue closing
+                        logger.info("Issue closing not yet implemented")
+                        actions_taken.append({
+                            "action": "close_issue_pending",
+                            "details": "Issue closing - not yet implemented",
+                            "success": False
+                        })
+                    elif action_type == "request_info":
+                        # This would be handled through the user_comment
+                        logger.info("Info request handled through main comment")
+                        actions_taken.append({
+                            "action": "info_request_handled",
+                            "details": "Information request included in main comment",
                             "success": True
                         })
-                    elif action_type == "add_comment" and action_details:
-                        await self._add_comment_to_issue(action_details)
+                    else:
+                        logger.warning(f"Unknown action type: {action_type}")
                         actions_taken.append({
-                            "action": "comment_added",
-                            "details": "Additional comment posted",
-                            "success": True
+                            "action": "unknown_action",
+                            "details": f"Unknown action type: {action_type}",
+                            "success": False
                         })
-                    # Add more action types as needed
                     
                 except Exception as e:
                     logger.error(f"Error executing action {action}: {str(e)}")
@@ -832,6 +752,60 @@ Your user comment should:
             })
         
         return actions_taken
+
+    def _assess_user_provided_information(self, issue_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Assess what information the user has already provided
+        
+        Args:
+            issue_data: GitHub issue data
+            
+        Returns:
+            Assessment of user-provided information
+        """
+        try:
+            body = issue_data.get('body', '')
+            title = issue_data.get('title', '')
+            combined_text = f"{title} {body}".lower()
+            
+            assessment = {
+                'has_code_samples': bool(re.search(r'```|`[^`]+`', body)),
+                'has_reproduction_steps': any(indicator in combined_text for indicator in [
+                    'steps to reproduce', 'reproduction steps', 'how to reproduce',
+                    'to reproduce:', 'step 1', 'step 2', 'reproduc'
+                ]),
+                'has_error_messages': any(indicator in combined_text for indicator in [
+                    'error:', 'exception:', 'traceback', 'stack trace',
+                    'console.error', 'throw', 'failed with', 'error'
+                ]),
+                'has_screenshots': self._has_images_in_text(body),
+                'has_environment_details': any(indicator in combined_text for indicator in [
+                    'version', 'browser', 'os', 'operating system', 'environment',
+                    'chrome', 'firefox', 'safari', 'edge', 'windows', 'mac', 'linux'
+                ])
+            }
+            
+            # Determine completeness level
+            provided_count = sum(assessment.values())
+            if provided_count >= 4:
+                assessment['completeness_level'] = 'complete'
+            elif provided_count >= 2:
+                assessment['completeness_level'] = 'partial'
+            else:
+                assessment['completeness_level'] = 'insufficient'
+            
+            return assessment
+            
+        except Exception as e:
+            logger.error(f"Error assessing user provided information: {str(e)}")
+            return {
+                'has_code_samples': False,
+                'has_reproduction_steps': False,
+                'has_error_messages': False,
+                'has_screenshots': False,
+                'has_environment_details': False,
+                'completeness_level': 'insufficient'
+            }
 
     # Tool implementation methods
     async def _execute_rag_search(self, issue_data: Dict[str, Any]) -> Dict[str, Any]:
