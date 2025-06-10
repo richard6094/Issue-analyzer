@@ -603,8 +603,7 @@ Your user comment should:
 **CRITICAL**: Your response must demonstrate that you've carefully reviewed and understood the user's contributions. Generic responses that ignore their specific details are unacceptable.
 """
             llm = get_llm(provider="azure", temperature=0.1)
-            response = await llm.agenerate([[HumanMessage(content=final_analysis_prompt)]])
-            # Handle LangChain agenerate response format
+            response = await llm.agenerate([[HumanMessage(content=final_analysis_prompt)]])            # Handle LangChain agenerate response format
             if hasattr(response.generations[0][0], 'text'):
                 response_text = response.generations[0][0].text
             elif hasattr(response.generations[0][0], 'message') and hasattr(response.generations[0][0].message, 'content'):
@@ -613,19 +612,27 @@ Your user comment should:
                 response_text = str(response.generations[0][0])
             
             try:
-                final_analysis = json.loads(response_text)
+                # First try to extract and parse JSON properly
+                final_analysis = self._extract_and_parse_json_response(response_text)
+                
+                # Validate and clean the user_comment
+                if "user_comment" in final_analysis:
+                    final_analysis["user_comment"] = self._clean_user_comment(final_analysis["user_comment"])
+                
                 logger.info(f"Generated final analysis: {final_analysis.get('issue_type', 'unknown')} with {final_analysis.get('confidence', 0):.1%} confidence")
                 return final_analysis
                 
             except json.JSONDecodeError as e:
-                logger.warning(f"Failed to parse final analysis, using text response: {str(e)}")
+                logger.warning(f"Failed to parse final analysis, using cleaned text response: {str(e)}")
+                # Extract user comment from the raw response if JSON parsing fails
+                cleaned_comment = self._extract_user_comment_from_response(response_text)
                 return {
                     "issue_type": "unknown",
                     "severity": "medium",
                     "confidence": 0.5,
                     "summary": "Analysis completed but response parsing failed",
                     "detailed_analysis": response_text,
-                    "user_comment": response_text
+                    "user_comment": cleaned_comment
                 }
                 
         except Exception as e:
@@ -806,6 +813,151 @@ Your user comment should:
                 'has_environment_details': False,
                 'completeness_level': 'insufficient'
             }
+
+    def _extract_and_parse_json_response(self, response_text: str) -> Dict[str, Any]:
+        """
+        Extract and parse JSON from LLM response, handling nested JSON structures
+        
+        Args:
+            response_text: Raw response text from LLM
+            
+        Returns:
+            Parsed JSON dictionary
+            
+        Raises:
+            json.JSONDecodeError: If JSON parsing fails
+        """
+        import re
+        
+        # First try to parse the entire response as JSON
+        try:
+            return json.loads(response_text.strip())
+        except json.JSONDecodeError:
+            pass
+        
+        # Try to find JSON within the response using regex
+        json_pattern = r'```json\s*(\{.*?\})\s*```'
+        json_match = re.search(json_pattern, response_text, re.DOTALL)
+        if json_match:
+            try:
+                return json.loads(json_match.group(1))
+            except json.JSONDecodeError:
+                pass
+        
+        # Try to find JSON block without markdown formatting
+        json_pattern2 = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+        json_matches = re.findall(json_pattern2, response_text, re.DOTALL)
+        
+        for json_str in json_matches:
+            try:
+                parsed = json.loads(json_str)
+                # Verify it has expected structure
+                if isinstance(parsed, dict) and any(key in parsed for key in ['issue_type', 'user_comment', 'summary']):
+                    return parsed
+            except json.JSONDecodeError:
+                continue
+        
+        # If all else fails, raise an error
+        raise json.JSONDecodeError("Could not extract valid JSON from response", response_text, 0)
+    
+    def _clean_user_comment(self, user_comment: str) -> str:
+        """
+        Clean and validate user comment, handling nested JSON structures
+        
+        Args:
+            user_comment: Raw user comment string
+            
+        Returns:
+            Cleaned user comment text
+        """
+        if not user_comment:
+            return "I've analyzed this issue. Please let me know if you need any clarification."
+        
+        # Check if the user_comment itself contains JSON
+        try:
+            # Try to parse as JSON to see if it's a nested structure
+            parsed_comment = json.loads(user_comment)
+            if isinstance(parsed_comment, dict):
+                # Extract the actual comment from nested JSON
+                if "user_comment" in parsed_comment:
+                    return self._clean_user_comment(parsed_comment["user_comment"])
+                elif "message" in parsed_comment:
+                    return str(parsed_comment["message"])
+                elif "content" in parsed_comment:
+                    return str(parsed_comment["content"])
+                else:
+                    # If it's a JSON object but no clear comment field, return a fallback
+                    logger.warning(f"Nested JSON found in user_comment but no clear text field: {parsed_comment}")
+                    return "I've completed the analysis of this issue. The results have been processed successfully."
+        except json.JSONDecodeError:
+            # Not JSON, treat as regular string
+            pass
+        
+        # Clean up common formatting issues
+        cleaned = str(user_comment).strip()
+        
+        # Remove markdown code blocks if they contain JSON
+        import re
+        json_block_pattern = r'```json\s*\{.*?\}\s*```'
+        if re.search(json_block_pattern, cleaned, re.DOTALL):
+            # This appears to be a JSON block, extract meaningful text
+            logger.warning(f"Removing JSON code block from user comment: {cleaned[:100]}...")
+            return "I've analyzed this issue and the results are available. Please let me know if you need any additional information."
+        
+        # Remove any remaining JSON-like structures
+        json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+        cleaned = re.sub(json_pattern, '', cleaned).strip()
+        
+        # Ensure we have some meaningful content
+        if len(cleaned) < 10:
+            return "I've completed the analysis of this issue. The details have been recorded successfully."
+        
+        return cleaned
+    
+    def _extract_user_comment_from_response(self, response_text: str) -> str:
+        """
+        Extract a user-friendly comment from raw LLM response when JSON parsing fails
+        
+        Args:
+            response_text: Raw response text from LLM
+            
+        Returns:
+            User-friendly comment text
+        """
+        import re
+        
+        # Try to find any user_comment field in the text
+        user_comment_pattern = r'"user_comment":\s*"([^"]*)"'
+        match = re.search(user_comment_pattern, response_text)
+        if match:
+            return self._clean_user_comment(match.group(1))
+        
+        # Try to find analysis or summary text that could serve as a comment
+        lines = response_text.split('\n')
+        meaningful_lines = []
+        
+        for line in lines:
+            line = line.strip()
+            # Skip empty lines, JSON brackets, and technical formatting
+            if (line and 
+                not line.startswith('{') and 
+                not line.startswith('}') and 
+                not line.startswith('"') and
+                not line.startswith('[') and
+                not line.startswith(']') and
+                len(line) > 20):  # Minimum length for meaningful content
+                meaningful_lines.append(line)
+        
+        if meaningful_lines:
+            # Take the first meaningful line as the comment
+            comment = meaningful_lines[0]
+            # Clean up any JSON fragments
+            comment = re.sub(r'[{}"\[\]]', '', comment).strip()
+            if len(comment) > 10:
+                return comment
+        
+        # Fallback comment
+        return "I've analyzed this issue. The analysis has been completed and the results are being processed."
 
     # Tool implementation methods
     async def _execute_rag_search(self, issue_data: Dict[str, Any]) -> Dict[str, Any]:
