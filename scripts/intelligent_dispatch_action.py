@@ -20,8 +20,13 @@ from typing import Dict, Any, Optional, List
 from enum import Enum
 from dataclasses import dataclass
 
-# Add project root to path for imports
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add parent directory to sys.path to allow importing sibling packages
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if parent_dir not in sys.path:
+    sys.path.append(parent_dir)
+
+# # Add project root to path for imports
+# sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import existing modules
 from LLM.llm_provider import get_llm
