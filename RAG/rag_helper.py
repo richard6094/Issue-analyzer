@@ -15,7 +15,7 @@ if parent_dir not in sys.path:
 from RAG.query_vectordb import query_database, format_search_result
 
 # Constants for default configuration
-DEFAULT_DB_PATH = "./chroma_db"
+DEFAULT_DB_PATH = os.path.join(parent_dir, "chroma_db")
 DEFAULT_COLLECTION = "github_issues"
 DEFAULT_RESULTS_COUNT = 3
 DEFAULT_AZURE_ENDPOINT = "https://officegithubcopilotextsubdomain.openai.azure.com/"

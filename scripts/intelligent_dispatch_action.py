@@ -106,8 +106,10 @@ class IntelligentGitHubDispatcher:
         
         # Initialize results storage
         self.analysis_context = {
-            "timestamp": datetime.utcnow().isoformat(),        "issue_data": {},
-            "decision_history": [],            "tool_results": [],
+            "timestamp": datetime.utcnow().isoformat(),        
+            "issue_data": {},
+            "decision_history": [],            
+            "tool_results": [],
             "final_analysis": {},
             "actions_taken": []
         }
