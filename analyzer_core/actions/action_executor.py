@@ -46,7 +46,14 @@ class ActionExecutor:
                 
                 if action_type == "add_label" and action_details:
                     # Collect label for batch addition
-                    all_labels_to_add.add(action_details)
+                    labels_list = list(all_labels_to_add)
+                    success = await self.github_executor.add_labels(labels_list)
+                    actions_taken.append({
+                        "action": "labels_added",
+                        "details": f"Added labels: {', '.join(labels_list)}",
+                        "success": success
+                    })
+
                 elif action_type == "add_comment":
                     logger.info("Skipping add_comment action - using main user_comment instead")
                     actions_taken.append({
@@ -59,14 +66,14 @@ class ActionExecutor:
                     non_label_actions.append(action)
             
             # Step 2: Add labels if any
-            if all_labels_to_add:
-                labels_list = list(all_labels_to_add)
-                success = await self.github_executor.add_labels(labels_list)
-                actions_taken.append({
-                    "action": "labels_added",
-                    "details": f"Added labels: {', '.join(labels_list)}",
-                    "success": success
-                })
+            # if all_labels_to_add:
+            #     labels_list = list(all_labels_to_add)
+            #     success = await self.github_executor.add_labels(labels_list)
+            #     actions_taken.append({
+            #         "action": "labels_added",
+            #         "details": f"Added labels: {', '.join(labels_list)}",
+            #         "success": success
+            #     })
             
             # Step 3: Add the main user comment
             user_comment = final_analysis.get("user_comment", "")
