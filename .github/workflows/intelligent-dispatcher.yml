@@ -2,9 +2,9 @@ name: Intelligent AI-Driven Issue Dispatcher
 
 on:
   issues:
-    types: [opened, edited, labeled, unlabeled]
+    types: [opened]  # Only trigger on issue creation initially
   issue_comment:
-    types: [created, edited, deleted]
+    types: [created]  # Only trigger on new comments
   workflow_dispatch:
     inputs:
       issue_number:
@@ -22,8 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     if: |
       github.event_name == 'workflow_dispatch' || 
-      (github.event_name == 'issues' && contains(fromJson('["opened", "edited", "labeled", "unlabeled"]'), github.event.action)) ||
-      (github.event_name == 'issue_comment' && contains(fromJson('["created", "edited", "deleted"]'), github.event.action))
+      (github.event_name == 'issues' && github.event.action == 'opened') ||
+      (github.event_name == 'issue_comment' && github.event.action == 'created')
     
     permissions:
       issues: write
@@ -84,10 +84,7 @@ jobs:
             pip install --user chromadb
             pip install --user aiohttp pydantic
           fi
-            echo "✅ Dependencies installed successfully"
-
-      - name: Verify environment and cache status
-        run: |
+          echo "✅ Dependencies installed successfully"      - name: Verify environment and cache status
           echo "🔍 Environment verification:"
           echo "Python version: $(python --version)"
           echo "Pip cache dir: $(pip cache dir)"
@@ -107,6 +104,12 @@ jobs:
           SENDER_LOGIN: ${{ github.event.sender.login }}
           SENDER_TYPE: ${{ github.event.sender.type }}
           FORCE_ANALYSIS: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force_analysis || 'false' }}
+          # Comment-specific environment variables
+          COMMENT_ID: ${{ github.event.comment.id || '' }}
+          COMMENT_AUTHOR: ${{ github.event.comment.user.login || '' }}
+          COMMENT_BODY: ${{ github.event.comment.body || '' }}
+          # GitHub event payload path for additional context
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
           # Azure OpenAI Configuration
           AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
           AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
@@ -120,8 +123,9 @@ jobs:
           echo "🎯 Event: $GITHUB_EVENT_NAME ($GITHUB_EVENT_ACTION)"
           echo "📦 Repository: $REPO_FULL_NAME"
           echo "👤 Sender: $SENDER_LOGIN"
+          echo "💬 Comment Author: $COMMENT_AUTHOR"
           echo "🧠 Using LLM-driven intelligent decision making system..."
-          echo "🔧 This system analyzes issues and selects optimal tools dynamically"
+          echo "🔧 This system uses smart trigger logic to avoid bot loops"
           echo "🎯 Similar to GitHub Copilot - AI decides what tools to use"
           echo ""
           # Add Python user site-packages to PATH for cached packages
