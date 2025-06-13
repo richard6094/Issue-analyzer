@@ -5,7 +5,7 @@ Text processing utilities
 
 import re
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +79,8 @@ def has_images_in_text(text: str) -> bool:
     return False
 
 
-def prepare_issue_context(issue_data: Dict[str, Any], event_name: str = "", event_action: str = "") -> str:
-    """Prepare issue context for LLM analysis"""
+def prepare_issue_context(issue_data: Dict[str, Any], event_name: str = "", event_action: str = "", comment_data: Optional[Dict[str, Any]] = None) -> str:
+    """Prepare issue context for LLM analysis, including comment data if available"""
     title = issue_data.get('title', 'No title')
     body = issue_data.get('body', 'No description')
     labels = [label.get('name', '') for label in issue_data.get('labels', [])]
@@ -102,4 +102,20 @@ def prepare_issue_context(issue_data: Dict[str, Any], event_name: str = "", even
 
 **Event Type:** {event_name} - {event_action}
 """
+    
+    # Add comment context if available
+    if comment_data:
+        comment_author = comment_data.get('user', {}).get('login', 'Unknown')
+        comment_body = comment_data.get('body', '')
+        comment_created = comment_data.get('created_at', '')
+        
+        context += f"""
+
+**TRIGGERING COMMENT:**
+**Author:** {comment_author}
+**Created:** {comment_created}
+**Content:** 
+{comment_body}
+"""
+    
     return context

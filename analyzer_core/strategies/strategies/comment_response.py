@@ -105,27 +105,37 @@ Guidelines:
 
 Base prompt: {base_prompts.get('analysis', '')}
         """.strip()
-        
-        # Create conversation-aware final response prompt
+          # Create conversation-aware final response prompt
         customized["final_response"] = f"""
 You are responding to a comment in an ongoing GitHub issue conversation.
+
+**CRITICAL**: You MUST acknowledge and respond to the specific comment that triggered this analysis.
 
 Context Analysis Results:
 {self._format_context_for_prompt(context_analysis)}
 
 Response Guidelines:
-1. Acknowledge the comment and build on the conversation
-2. Address the specific intent: {comment_intent}
-3. Consider this is the {conversation_stage} stage of the conversation
-4. Provide value while avoiding repetition
-5. Be contextual and conversational, not robotic
-6. Move the conversation toward resolution
+1. **ACKNOWLEDGE THE TRIGGERING COMMENT**: Start by directly referencing what the user said in their comment
+2. **BUILD ON THE CONVERSATION**: Show understanding of the conversation flow and previous exchanges  
+3. **ADDRESS SPECIFIC INTENT**: Respond to the {comment_intent} intent shown in the comment
+4. **CONVERSATIONAL STAGE AWARENESS**: This is the {conversation_stage} stage - adjust your approach accordingly
+5. **PROVIDE CONTEXTUAL VALUE**: Offer insights that build on their specific comment content
+6. **AVOID REDUNDANCY**: Don't ask for information they've already provided in the comment
+
+**CRITICAL REQUIREMENTS**:
+- Your user_comment MUST reference specific content from the triggering comment
+- Show that you've read and understood what they wrote
+- Respond conversationally, not with generic issue analysis
+- If they provided new information, acknowledge it specifically
+- If they asked a question, answer it directly
+- If they expressed frustration, acknowledge their concern
 
 Tone and Approach:
-- Conversational and contextual
-- Acknowledging previous exchanges
-- Focused on the specific comment intent
+- Conversational and contextual (not robotic or templated)
+- Acknowledging previous exchanges and the specific comment
+- Focused on the comment's intent: {comment_intent}
 - Appropriate for ongoing dialogue with {relationship}
+- Show genuine engagement with their contribution
 
 Base prompt: {base_prompts.get('final_response', '')}
         """.strip()

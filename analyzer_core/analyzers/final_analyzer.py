@@ -62,9 +62,9 @@ class FinalAnalyzer:
             
         Returns:
             Final analysis with recommendations and actions
-        """
+        """        
         try:
-            issue_context = prepare_issue_context(issue_data, event_name, event_action)
+            issue_context = prepare_issue_context(issue_data, event_name, event_action, comment_data)
             results_summary = self._prepare_results_summary(tool_results)
             
             # Use strategy-customized prompts if available, otherwise use default
@@ -116,7 +116,6 @@ class FinalAnalyzer:
                 "summary": f"Analysis failed: {str(e)}",
                 "user_comment": "I encountered an error while analyzing this issue. Please try again or contact support."
             }
-    
     def _build_strategy_prompt(self, strategy_prompt: str, issue_context: str, results_summary: str) -> str:
         """Build final analysis prompt using strategy-customized template"""
         return f"""
@@ -124,7 +123,7 @@ class FinalAnalyzer:
 
 ## Analysis Context:
 
-### Original Issue:
+### Original Issue with Comment Context:
 {issue_context}
 
 ### Analysis Results:
@@ -146,10 +145,10 @@ class FinalAnalyzer:
             "priority": 1
         }}
     ],
-    "user_comment": "A helpful comment that builds on the user's provided information and offers genuine value"
+    "user_comment": "A helpful comment that directly responds to the triggering comment and builds on the conversation"
 }}
 
-**CRITICAL**: Your response must demonstrate that you've carefully reviewed and understood the user's contributions.
+**CRITICAL**: If there is a TRIGGERING COMMENT in the issue context above, your user_comment MUST directly respond to and acknowledge that specific comment. Show that you've read and understood what the user wrote in their comment.
         """.strip()
     
     def _build_default_prompt(self, issue_context: str, results_summary: str) -> str:
