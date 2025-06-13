@@ -47,7 +47,8 @@ class IssueCreatedStrategy(BaseStrategy):
         
         # Add strategy metadata
         context_analysis.update({
-            "strategy": "issue_created",            "author": author,
+            "strategy": "issue_created",            
+            "author": author,
             "existing_labels": labels,
             "approach": "llm_driven_initial_assessment"
         })
@@ -57,7 +58,9 @@ class IssueCreatedStrategy(BaseStrategy):
                    f"{context_analysis.get('confidence', 0):.2f} confidence")
         return context_analysis
     
-    async def select_tools(self, context_analysis: Dict[str, Any]) -> List[str]:        """
+    async def select_tools(self, context_analysis: Dict[str, Any]) -> List[str]:        
+        
+        """
         Select tools using LLM-based reasoning
         """
         
