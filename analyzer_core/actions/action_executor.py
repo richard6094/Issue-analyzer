@@ -16,13 +16,15 @@ class ActionExecutor:
     def __init__(self, config: Dict[str, Any]):
         self.github_executor = GitHubActionExecutor(config)
     
-    async def execute(self, final_analysis: Dict[str, Any], issue_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    async def execute(self, final_analysis: Dict[str, Any], issue_data: Dict[str, Any], 
+                     strategy_actions: List[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """
-        Execute actions based on the final analysis
+        Execute actions based on the final analysis and strategy recommendations
         
         Args:
             final_analysis: Final analysis from LLM
             issue_data: Original issue data
+            strategy_actions: Strategy-recommended actions (optional)
             
         Returns:
             List of actions taken
@@ -31,13 +33,20 @@ class ActionExecutor:
         all_labels_to_add: Set[str] = set()  # Use set to avoid duplicate labels
         
         try:
-            # Step 1: Collect all labels (from both recommended_labels and recommended_actions)
+            # Step 1: Collect all labels from final analysis
             recommended_labels = final_analysis.get("recommended_labels", [])
             if recommended_labels:
                 all_labels_to_add.update(recommended_labels)
             
-            # Process recommended actions to collect additional labels and other actions
+            # Step 2: Process final analysis recommended actions
             recommended_actions = final_analysis.get("recommended_actions", [])
+            
+            # Step 3: Merge with strategy-recommended actions if provided
+            if strategy_actions:
+                logger.info(f"Merging {len(strategy_actions)} strategy-recommended actions")
+                recommended_actions.extend(strategy_actions)
+            
+            # Process all actions to collect labels and other actions
             non_label_actions = []
             
             for action in recommended_actions:

@@ -1,6 +1,6 @@
 # analyzer_core/dispatcher.py
 """
-Core dispatcher that orchestrates the analysis workflow
+Core dispatcher that orchestrates the analysis workflow using Strategy Engine
 """
 
 import logging
@@ -18,9 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class IntelligentDispatcher:
-    """Core dispatcher that orchestrates the analysis workflow"""
-    
-    def __init__(self, config: Dict[str, Any]):
+    """Core dispatcher that orchestrates the analysis workflow using Strategy Engine"""    def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.initial_assessor = InitialAssessor()
         self.result_analyzer = ResultAnalyzer()
@@ -28,16 +26,20 @@ class IntelligentDispatcher:
         self.action_executor = ActionExecutor(config)
         self.tool_registry = get_tool_registry()
         
+        # Initialize Strategy Engine
+        from .strategies.strategy_engine import StrategyEngine
+        self.strategy_engine = StrategyEngine()
+        
         # Initialize analysis context
         self.analysis_context = AnalysisContext()
         
-        logger.info(f"Initialized Intelligent Dispatcher for issue #{config.get('issue_number')}")
+        logger.info(f"Initialized Intelligent Dispatcher with Strategy Engine for issue #{config.get('issue_number')}")
     
     async def analyze(self, issue_data: Dict[str, Any], 
                      comment_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Main analysis orchestration method"""
+        """Main analysis orchestration method using Strategy Engine"""
         try:
-            logger.info("Starting intelligent analysis workflow...")
+            logger.info("Starting intelligent analysis workflow with Strategy Engine...")
             
             # Check trigger logic
             trigger_decision = get_trigger_decision(issue_data, comment_data)
@@ -57,60 +59,60 @@ class IntelligentDispatcher:
             if comment_data:
                 self.analysis_context.comment_data = comment_data
             
-            # Step 1: Initial assessment
-            logger.info("Step 1: Initial assessment")
-            initial_decision = await self.initial_assessor.assess(
-                issue_data, 
-                comment_data,
-                self.config.get("event_name", ""),
-                self.config.get("event_action", "")
+            # Step 1: Execute Strategy Engine
+            logger.info("Step 1: Execute Strategy Engine")
+            strategy_result = await self.strategy_engine.execute_strategy(
+                trigger_decision, issue_data, comment_data
             )
-            self.analysis_context.decision_history.append(self._decision_to_dict(initial_decision))
             
-            # Step 2: Execute selected tools
-            logger.info("Step 2: Execute initial tools")
-            tool_results = await self._execute_tools(initial_decision.selected_tools, issue_data, comment_data)
+            # Extract strategy recommendations
+            selected_tools = strategy_result.get("selected_tools", [])
+            customized_prompts = strategy_result.get("customized_prompts", {})
+            context_analysis = strategy_result.get("context_analysis", {})
+            
+            # Store strategy result in context
+            self.analysis_context.strategy_result = strategy_result
+            
+            # Step 2: Execute selected tools with strategy-informed approach
+            logger.info("Step 2: Execute strategy-selected tools")
+            # Convert tool names to AvailableTools enum values
+            tool_enums = []
+            for tool_name in selected_tools:
+                try:
+                    tool_enum = AvailableTools(tool_name)
+                    tool_enums.append(tool_enum)
+                except ValueError:
+                    logger.warning(f"Unknown tool: {tool_name}")
+            
+            tool_results = await self._execute_tools(tool_enums, issue_data, comment_data)
             self.analysis_context.tool_results.extend([self._tool_result_to_dict(r) for r in tool_results])
             
-            # Step 3: Analyze results
-            logger.info("Step 3: Analyze tool results")
-            next_decision = await self.result_analyzer.analyze(
-                issue_data, 
-                tool_results, 
-                comment_data,
-                self.config.get("event_name", ""),
-                self.config.get("event_action", "")
-            )
-            
-            # Step 4: Execute additional tools if needed
-            if next_decision and next_decision.selected_tools:
-                logger.info("Step 4: Execute additional tools")
-                additional_results = await self._execute_tools(next_decision.selected_tools, issue_data, comment_data)
-                self.analysis_context.tool_results.extend([self._tool_result_to_dict(r) for r in additional_results])
-                self.analysis_context.decision_history.append(self._decision_to_dict(next_decision))
-                tool_results.extend(additional_results)  # For final analysis
-            
-            # Step 5: Generate final analysis
-            logger.info("Step 5: Generate final analysis")
+            # Step 3: Generate final analysis using strategy-customized prompts
+            logger.info("Step 3: Generate strategy-informed final analysis")
             final_analysis = await self.final_analyzer.generate(
                 issue_data, 
                 tool_results,
                 comment_data,
                 self.config.get("event_name", ""),
-                self.config.get("event_action", "")
+                self.config.get("event_action", ""),
+                customized_prompts  # Pass strategy-customized prompts
             )
             self.analysis_context.final_analysis = final_analysis
             
-            # Step 6: Execute actions
-            logger.info("Step 6: Execute actions")
-            actions = await self.action_executor.execute(final_analysis, issue_data)
+            # Step 4: Execute strategy-recommended actions
+            logger.info("Step 4: Execute strategy-recommended actions")
+            # Get actions from strategy if available
+            strategy_actions = await self._get_strategy_actions(strategy_result, final_analysis, context_analysis)
+            
+            # Execute actions
+            actions = await self.action_executor.execute(final_analysis, issue_data, strategy_actions)
             self.analysis_context.actions_taken = actions
             
-            logger.info("Intelligent analysis workflow completed successfully")
+            logger.info("Strategy-driven analysis workflow completed successfully")
             return self._convert_context_to_dict()
             
         except Exception as e:
-            logger.error(f"Analysis error: {str(e)}")
+            logger.error(f"Strategy-driven analysis error: {str(e)}")
             self.analysis_context.error = str(e)
             return self._convert_context_to_dict()
     
@@ -149,6 +151,31 @@ class IntelligentDispatcher:
                 ))
         return results
     
+    async def _get_strategy_actions(self, strategy_result: Dict[str, Any], 
+                                  final_analysis: Dict[str, Any],
+                                  context_analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Get actions recommended by the strategy based on analysis results
+        """
+        try:
+            strategy_name = strategy_result.get("strategy_name", "unknown")
+            
+            # Get the strategy instance
+            if strategy_name in self.strategy_engine.strategies:
+                strategy = self.strategy_engine.strategies[strategy_name]
+                
+                # Get strategy-recommended actions
+                strategy_actions = await strategy.recommend_actions(final_analysis, context_analysis)
+                logger.info(f"Strategy {strategy_name} recommended {len(strategy_actions)} actions")
+                return strategy_actions
+            else:
+                logger.warning(f"Strategy {strategy_name} not found for action recommendations")
+                return []
+                
+        except Exception as e:
+            logger.error(f"Error getting strategy actions: {str(e)}")
+            return []
+    
     def _convert_context_to_dict(self) -> Dict[str, Any]:
         """Convert analysis context to dictionary for JSON serialization"""
         return {
@@ -156,6 +183,7 @@ class IntelligentDispatcher:
             "issue_data": self.analysis_context.issue_data,
             "comment_data": self.analysis_context.comment_data,
             "trigger_decision": self.analysis_context.trigger_decision,
+            "strategy_result": self.analysis_context.strategy_result,
             "decision_history": self.analysis_context.decision_history,
             "tool_results": self.analysis_context.tool_results,
             "final_analysis": self.analysis_context.final_analysis,
@@ -179,6 +207,6 @@ class IntelligentDispatcher:
             "tool": result.tool.value,
             "success": result.success,
             "data": result.data,
-            "error_message": result.error_message,
-            "confidence": result.confidence
+            "confidence": result.confidence,
+            "error_message": result.error_message
         }

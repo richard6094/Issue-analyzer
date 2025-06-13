@@ -15,6 +15,7 @@ class AnalysisContext:
     issue_data: Dict[str, Any] = field(default_factory=dict)
     comment_data: Optional[Dict[str, Any]] = None
     trigger_decision: Optional[Dict[str, Any]] = None
+    strategy_result: Optional[Dict[str, Any]] = None  # Added for strategy layer
     decision_history: List[Dict[str, Any]] = field(default_factory=list)
     tool_results: List[Dict[str, Any]] = field(default_factory=list)
     final_analysis: Dict[str, Any] = field(default_factory=dict)
