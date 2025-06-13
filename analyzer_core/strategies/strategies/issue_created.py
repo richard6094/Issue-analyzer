@@ -144,13 +144,12 @@ Base prompt: {base_prompts.get('final_response', '')}
         
         logger.info(f"LLM recommended {len(recommended_actions)} actions for new issue")        
         return recommended_actions
-    
     async def _llm_analyze_issue_context(self, title: str, body: str, labels: List[str], 
                                        author: str, trigger_context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         """
         Use LLM with chain of thought to analyze issue context
         """
-        from ....LLM.llm_provider import get_llm
+        from LLM.llm_provider import get_llm
         from langchain.schema import HumanMessage
         import json
         
@@ -260,12 +259,11 @@ Think through each step carefully and provide detailed reasoning.
         except Exception as e:
             logger.error(f"LLM context analysis failed: {str(e)}")
             return self._fallback_context_analysis()
-    
     async def _llm_select_tools(self, context_analysis: Dict[str, Any]) -> List[str]:
         """
         Use LLM to select appropriate tools based on context analysis
         """
-        from ....LLM.llm_provider import get_llm
+        from LLM.llm_provider import get_llm
         from langchain.schema import HumanMessage
         import json
         
@@ -359,13 +357,12 @@ Provide thoughtful tool selection based on the specific context.
         except Exception as e:
             logger.error(f"LLM tool selection failed: {str(e)}")
             return self._fallback_tool_selection()
-    
     async def _llm_recommend_actions(self, analysis_results: Dict[str, Any], 
                                    context_analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
         Use LLM to recommend actions based on analysis results and context
         """
-        from ....LLM.llm_provider import get_llm
+        from LLM.llm_provider import get_llm
         from langchain.schema import HumanMessage
         import json
         

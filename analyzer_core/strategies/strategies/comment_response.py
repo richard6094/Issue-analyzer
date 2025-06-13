@@ -147,11 +147,12 @@ Base prompt: {base_prompts.get('final_response', '')}
     
     async def _llm_analyze_comment_context(self, title: str, body: str, comment_body: str,
                                          comment_author: str, issue_author: str, labels: List[str],
-                                         trigger_context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+                                         trigger_context: Optional[Dict[str, Any]]) -> Dict[str, Any]:        
+        
         """
         Use LLM with chain of thought to analyze comment context
         """
-        from ....LLM.llm_provider import get_llm
+        from LLM.llm_provider import get_llm
         from langchain.schema import HumanMessage
         import json
         
@@ -270,12 +271,11 @@ Focus on understanding the conversational context and what would be most helpful
         except Exception as e:
             logger.error(f"LLM comment analysis failed: {str(e)}")
             return self._fallback_comment_analysis()
-    
     async def _llm_select_comment_tools(self, context_analysis: Dict[str, Any]) -> List[str]:
         """
         Use LLM to select appropriate tools for comment analysis
         """
-        from ....LLM.llm_provider import get_llm
+        from LLM.llm_provider import get_llm
         from langchain.schema import HumanMessage
         import json
         
@@ -369,13 +369,12 @@ Focus on tools that specifically address the comment's needs without redundancy.
         except Exception as e:
             logger.error(f"LLM tool selection failed: {str(e)}")
             return self._fallback_comment_tools()
-    
     async def _llm_recommend_comment_actions(self, analysis_results: Dict[str, Any], 
                                            context_analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
         Use LLM to recommend actions for comment responses
         """
-        from ....LLM.llm_provider import get_llm
+        from LLM.llm_provider import get_llm
         from langchain.schema import HumanMessage
         import json
         

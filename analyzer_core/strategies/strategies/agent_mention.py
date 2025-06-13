@@ -147,11 +147,12 @@ Base prompt: {base_prompts.get('final_response', '')}
     
     async def _llm_analyze_mention_context(self, title: str, body: str, comment_body: str,
                                          comment_author: str, issue_author: str, labels: List[str],
-                                         trigger_context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+                                         trigger_context: Optional[Dict[str, Any]]) -> Dict[str, Any]:        
+        
         """
         Use LLM with chain of thought to analyze agent mention context
         """
-        from ....LLM.llm_provider import get_llm
+        from LLM.llm_provider import get_llm
         from langchain.schema import HumanMessage
         import json
         
@@ -267,12 +268,11 @@ Focus on understanding the community dynamics and how to respond helpfully while
         except Exception as e:
             logger.error(f"LLM mention analysis failed: {str(e)}")
             return self._fallback_mention_analysis()
-    
     async def _llm_select_mention_tools(self, context_analysis: Dict[str, Any]) -> List[str]:
         """
         Use LLM to select appropriate tools for agent mention responses
         """
-        from ....LLM.llm_provider import get_llm
+        from LLM.llm_provider import get_llm
         from langchain.schema import HumanMessage
         import json
         
@@ -366,13 +366,12 @@ Focus on tools that provide appropriate assistance while respecting community dy
         except Exception as e:
             logger.error(f"LLM tool selection failed: {str(e)}")
             return self._fallback_mention_tools()
-    
     async def _llm_recommend_mention_actions(self, analysis_results: Dict[str, Any], 
                                            context_analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
         Use LLM to recommend actions for agent mention responses
         """
-        from ....LLM.llm_provider import get_llm
+        from LLM.llm_provider import get_llm
         from langchain.schema import HumanMessage
         import json
         
