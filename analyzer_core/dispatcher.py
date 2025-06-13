@@ -18,7 +18,9 @@ logger = logging.getLogger(__name__)
 
 
 class IntelligentDispatcher:
-    """Core dispatcher that orchestrates the analysis workflow using Strategy Engine"""    def __init__(self, config: Dict[str, Any]):
+    """Core dispatcher that orchestrates the analysis workflow using Strategy Engine"""
+    
+    def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.initial_assessor = InitialAssessor()
         self.result_analyzer = ResultAnalyzer()
@@ -83,7 +85,6 @@ class IntelligentDispatcher:
                     tool_enums.append(tool_enum)
                 except ValueError:
                     logger.warning(f"Unknown tool: {tool_name}")
-            
             tool_results = await self._execute_tools(tool_enums, issue_data, comment_data)
             self.analysis_context.tool_results.extend([self._tool_result_to_dict(r) for r in tool_results])
             

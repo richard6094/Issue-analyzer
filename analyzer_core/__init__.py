@@ -8,12 +8,12 @@ This package contains the core components for intelligent GitHub issue analysis:
 - GitHub action execution
 """
 
-# Temporarily comment out to debug remaining import issues
-# from .dispatcher import IntelligentDispatcher
+# Import core components
+from .dispatcher import IntelligentDispatcher
 from .trigger_logic import TriggerLogic, TriggerDecision, get_trigger_decision
 
 __all__ = [
-    # 'IntelligentDispatcher',
+    'IntelligentDispatcher',
     'TriggerLogic',
     'TriggerDecision', 
     'get_trigger_decision'
