@@ -373,7 +373,8 @@ Focus on tools that specifically address the comment's needs without redundancy.
                 valid_tools = [tool for tool in selected_tools if tool in available_tools]
                 return valid_tools if valid_tools else self._fallback_comment_tools()
             except json.JSONDecodeError:
-                logger.warning("Failed to parse LLM tool selection response, using fallback")
+                logger.warning(f"Failed to parse LLM tool selection response, using fallback. Error: {str(e)}")
+                logger.warning(f"Error position: line {e.lineno}, column {e.colno}")
                 return self._fallback_comment_tools()
                 
         except Exception as e:
