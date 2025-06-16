@@ -13,7 +13,8 @@ class RAGSearchTool(BaseTool):
     
     def __init__(self):
         super().__init__("rag_search")   
-           async def execute(self, issue_data: Dict[str, Any], 
+        
+    async def execute(self, issue_data: Dict[str, Any], 
                      comment_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Execute RAG search for relevant information"""
         try:
