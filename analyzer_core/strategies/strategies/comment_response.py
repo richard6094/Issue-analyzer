@@ -226,15 +226,15 @@ Consider the relationship dynamics:
 
 ## Response Format:
 You must respond with ONLY a valid JSON object. Do not include any markdown formatting, code blocks, or additional text. The JSON should be on a single line or properly formatted:
-{
-    "reasoning": {
+{{
+    "reasoning": {{
         "intent_analysis": "Your analysis of the comment's intent",
         "conversation_analysis": "Your assessment of conversation stage",
         "information_analysis": "New information provided in the comment",
         "response_analysis": "What type of response is needed",
         "relationship_analysis": "Relationship context and dynamics"
-    },
-    "conclusions": {
+    }},
+    "conclusions": {{
         "comment_intent": "info_providing|question_asking|progress_update|help_request|feedback|urgency_expression",
         "conversation_stage": "initial|investigation|clarification|resolution|follow_up",
         "new_information_level": "significant|moderate|minimal|none",
@@ -242,11 +242,11 @@ You must respond with ONLY a valid JSON object. Do not include any markdown form
         "author_relationship": "issue_owner|external_contributor|maintainer|community_member",
         "needs_escalation": true,
         "conversation_sentiment": "positive|neutral|frustrated|confused"
-    },
+    }},
     "confidence": 0.85,
     "key_insights": ["insight1", "insight2"],
     "response_priorities": ["priority1", "priority2"]
-}
+}}
 
 Focus on understanding the conversational context and what would be most helpful.
         """
@@ -332,20 +332,20 @@ You are selecting analysis tools for responding to a GitHub issue comment. Consi
 
 ## Response Format:
 Return ONLY the JSON object below without any markdown formatting, code blocks, or additional text:
-{
-    "reasoning": {
+{{
+    "reasoning": {{
         "conversation_context": "How conversation stage affects tool selection",
         "comment_specific_needs": "What the comment specifically requires",
         "redundancy_avoidance": "How you avoided redundant tool usage",
         "efficiency_rationale": "Why this minimal set is sufficient"
-    },
+    }},
     "selected_tools": ["tool1", "tool2"],
-    "tool_priorities": {
+    "tool_priorities": {{
         "tool1": 1,
         "tool2": 2
-    },
+    }},
     "expected_value": "What value these tools will add to the conversation"
-}
+}}
 
 Focus on tools that specifically address the comment's needs without redundancy.
         """
@@ -423,23 +423,23 @@ You are recommending actions for responding to a GitHub issue comment. Consider 
 
 ## Response Format:
 Return ONLY the JSON object below without any markdown formatting, code blocks, or additional text:
-{
-    "reasoning": {
+{{
+    "reasoning": {{
         "response_strategy": "Your strategy for responding to this comment",
         "conversation_progression": "How actions move conversation forward",
         "administrative_needs": "Any needed status/classification updates",
         "efficiency_considerations": "Why this action set is optimal"
-    },
+    }},
     "recommended_actions": [
-        {
+        {{
             "action": "action_name",
             "priority": 1,
             "details": "Specific details for this action",
             "rationale": "Why this action addresses the comment"
-        }
+        }}
     ],
     "conversation_impact": "How these actions will impact the ongoing conversation"
-}
+}}
 
 Focus on actions that directly respond to the comment and move the conversation forward.
         """
