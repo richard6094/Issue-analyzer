@@ -5,7 +5,7 @@ RAG search tool for finding relevant information
 
 from typing import Dict, Any, Optional
 from .base_tool import BaseTool
-from RAG.rag_helper import default_rag_helper
+from RAG.rag_helper import query_vectordb_for_regression
 
 
 class RAGSearchTool(BaseTool):
@@ -13,7 +13,6 @@ class RAGSearchTool(BaseTool):
     
     def __init__(self):
         super().__init__("rag_search")
-    
     async def execute(self, issue_data: Dict[str, Any], 
                      comment_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Execute RAG search for relevant information"""
@@ -23,17 +22,16 @@ class RAGSearchTool(BaseTool):
             
             issue_content = self.get_issue_content(issue_data, comment_data)
             
-            results, context = default_rag_helper.query_for_regression_analysis(
+            context = query_vectordb_for_regression(
                 issue_title=issue_data.get('title', ''),
                 issue_body=issue_data.get('body', ''),
                 n_results=5
             )
             
             return {
-                "search_results": results,
                 "context": context,
-                "results_count": len(results) if results else 0,
-                "confidence": 0.8 if results else 0.3
+                "results_count": 1 if context and context != "No similar issues found in the database." else 0,
+                "confidence": 0.8 if context and context != "No similar issues found in the database." else 0.3
             }
         except Exception as e:
             self.logger.error(f"RAG search failed: {str(e)}")
