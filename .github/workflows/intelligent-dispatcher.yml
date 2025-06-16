@@ -35,30 +35,29 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Python with cache
+      - name: Setup Python without cache
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
-          cache-dependency-path: 'analyzer_core/requirements.txt'  # 修正路径：analyzer-core -> analyzer_core
 
-      - name: Cache pip dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('analyzer_core/requirements.txt') }}  # 修正路径
-          restore-keys: |
-            ${{ runner.os }}-pip-
+      # Cache disabled for debugging ChromaDB version issues
+      # - name: Cache pip dependencies
+      #   uses: actions/cache@v4
+      #   with:
+      #     path: ~/.cache/pip
+      #     key: ${{ runner.os }}-pip-${{ hashFiles('analyzer_core/requirements.txt') }}
+      #     restore-keys: |
+      #       ${{ runner.os }}-pip-
 
-      - name: Cache Python packages
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.local/lib/python3.11/site-packages
-            ~/.local/bin
-          key: ${{ runner.os }}-python-packages-${{ hashFiles('analyzer_core/requirements.txt') }}  # 修正路径
-          restore-keys: |
-            ${{ runner.os }}-python-packages-
+      # - name: Cache Python packages
+      #   uses: actions/cache@v4
+      #   with:
+      #     path: |
+      #       ~/.local/lib/python3.11/site-packages
+      #       ~/.local/bin
+      #     key: ${{ runner.os }}-python-packages-${{ hashFiles('analyzer_core/requirements.txt') }}
+      #     restore-keys: |
+      #       ${{ runner.os }}-python-packages-
 
       - name: Azure Login
         uses: azure/login@v1
@@ -67,32 +66,32 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Install dependencies with cache optimization
+      - name: Install dependencies without cache
         run: |
-          echo "🔧 Installing Python dependencies with caching..."
+          echo "🔧 Installing Python dependencies without caching..."
           python -m pip install --upgrade pip
           
           # Check if requirements.txt exists and install from it
-          if [ -f analyzer_core/requirements.txt ]; then  # 修正路径
+          if [ -f analyzer_core/requirements.txt ]; then
             echo "📦 Installing from requirements.txt..."
-            pip install --user -r analyzer_core/requirements.txt  # 修正路径
+            pip install -r analyzer_core/requirements.txt
           else
             echo "📦 Installing fallback dependencies..."
-            # Fallback to manual installation with --user flag for better caching
-            pip install --user azure-identity requests
-            pip install --user langchain_openai langchain_core
-            pip install --user chromadb
-            pip install --user aiohttp pydantic
+            # Fallback to manual installation
+            pip install azure-identity requests
+            pip install langchain_openai langchain_core
+            pip install chromadb
+            pip install aiohttp pydantic
           fi
           echo "✅ Dependencies installed successfully"
           
-      - name: Verify environment and cache status
+      - name: Verify environment
         run: |
           echo "🔍 Environment verification:"
           echo "Python version: $(python --version)"
-          echo "Pip cache dir: $(pip cache dir)"
-          echo "Python packages location:"
-          ls -la ~/.local/lib/python3.11/site-packages/ 2>/dev/null | head -10 || echo "  No cached packages found"
+          echo "ChromaDB version: $(python -c 'import chromadb; print(chromadb.__version__)')"
+          echo "Installed packages:"
+          pip list | grep -E "(chromadb|langchain|azure)"
 
       - name: Run Intelligent AI Dispatcher
         id: intelligent_dispatch
@@ -131,9 +130,6 @@ jobs:
           echo "🔧 This system uses smart trigger logic to avoid bot loops"
           echo "🎯 Similar to GitHub Copilot - AI decides what tools to use"
           echo ""
-          # Add Python user site-packages to PATH for cached packages
-          export PATH="$HOME/.local/bin:$PATH"
-          export PYTHONPATH="$HOME/.local/lib/python3.11/site-packages:$PYTHONPATH"
           python scripts/intelligent_dispatch_action.py
 
       - name: Upload Intelligent Analysis Results

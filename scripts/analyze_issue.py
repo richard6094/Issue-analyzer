@@ -209,24 +209,10 @@ def analyze_issue_for_regression(issue_content, issue_number, chat_model, issue_
     try:
         # Use issue_title and issue_body directly if provided
         title_for_rag = issue_title if issue_title is not None else ""
-        body_for_rag = issue_body if issue_body is not None else ""
-          # Get similar issues from vector database to enhance analysis
+        body_for_rag = issue_body if issue_body is not None else ""        # Get similar issues from vector database to enhance analysis
         similar_issues_context = ""
         try:
-            from RAG.rag_helper import query_vectordb_for_regression, DEFAULT_DB_PATH
-            print(f"[ANALYZE_ISSUE.PY] Attempting to access RAG database at: {DEFAULT_DB_PATH}")
-            print(f"[ANALYZE_ISSUE.PY] Database path exists: {os.path.exists(DEFAULT_DB_PATH)}")
-            if os.path.exists(DEFAULT_DB_PATH):
-                try:
-                    files = os.listdir(DEFAULT_DB_PATH)
-                    print(f"[ANALYZE_ISSUE.PY] Database directory contents: {files}")
-                    sqlite_file = os.path.join(DEFAULT_DB_PATH, "chroma.sqlite3")
-                    if os.path.exists(sqlite_file):
-                        size = os.path.getsize(sqlite_file)
-                        print(f"[ANALYZE_ISSUE.PY] chroma.sqlite3 size: {size} bytes")
-                except Exception as list_error:
-                    print(f"[ANALYZE_ISSUE.PY] Error listing database contents: {list_error}")
-            
+            from RAG.rag_helper import query_vectordb_for_regression
             raw_context = query_vectordb_for_regression(
                 issue_title=title_for_rag,
                 issue_body=body_for_rag,
@@ -234,11 +220,11 @@ def analyze_issue_for_regression(issue_content, issue_number, chat_model, issue_
             )
             # Escape curly braces to prevent LangChain template parsing errors
             similar_issues_context = escape_template_braces(raw_context)
-            print(f"[ANALYZE_ISSUE.PY] Retrieved similar issues context from vector database.")
+            print(f"Retrieved similar issues context from vector database.")
         except Exception as e:
-            print(f"[ANALYZE_ISSUE.PY] Warning: Failed to retrieve similar issues from vector database: {str(e)}")
+            print(f"Warning: Failed to retrieve similar issues from vector database: {str(e)}")
             import traceback
-            print(f"[ANALYZE_ISSUE.PY] Full traceback: {traceback.format_exc()}")
+            print(f"Full traceback: {traceback.format_exc()}")
         
         # Check if the issue content contains image URLs
         image_urls = extract_image_urls(issue_content)
