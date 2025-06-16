@@ -6,9 +6,87 @@ JSON processing utilities
 import json
 import re
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def extract_json_from_llm_response(response_text: str, logger_instance=None) -> Optional[Dict[str, Any]]:
+    """
+    Extract JSON from LLM response that might contain extra text or markdown
+    
+    Args:
+        response_text: Raw LLM response text
+        logger_instance: Optional logger for debug output
+        
+    Returns:
+        Parsed JSON dict or None if extraction fails
+    """
+    if logger_instance:
+        logger_instance.debug(f"Attempting to extract JSON from response of length: {len(response_text)}")
+    
+    # Strategy 1: Try direct parsing
+    try:
+        return json.loads(response_text.strip())
+    except json.JSONDecodeError:
+        if logger_instance:
+            logger_instance.debug("Direct JSON parsing failed, trying other strategies")
+    
+    # Strategy 2: Extract from markdown code blocks
+    markdown_patterns = [
+        r'```(?:json)?\s*\n?(.*?)\n?```',  # ```json ... ``` or ``` ... ```
+        r'```(?:JSON)?\s*\n?(.*?)\n?```',  # ```JSON ... ```
+    ]
+    
+    for pattern in markdown_patterns:
+        match = re.search(pattern, response_text, re.DOTALL)
+        if match:
+            try:
+                json_str = match.group(1).strip()
+                if logger_instance:
+                    logger_instance.debug(f"Found JSON in markdown block, length: {len(json_str)}")
+                return json.loads(json_str)
+            except json.JSONDecodeError:
+                if logger_instance:
+                    logger_instance.debug("Failed to parse JSON from markdown block")
+    
+    # Strategy 3: Find JSON by looking for outermost braces
+    start_idx = response_text.find('{')
+    end_idx = response_text.rfind('}')
+    
+    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+        try:
+            json_str = response_text[start_idx:end_idx + 1]
+            if logger_instance:
+                logger_instance.debug(f"Extracted JSON by braces, length: {len(json_str)}")
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+            if logger_instance:
+                logger_instance.debug("Failed to parse JSON extracted by braces")
+    
+    # Strategy 4: Clean common issues and retry
+    if start_idx != -1 and end_idx != -1:
+        json_str = response_text[start_idx:end_idx + 1]
+        # Remove common issues
+        cleaned = json_str.strip()
+        # Replace single quotes with double quotes (common LLM mistake)
+        cleaned = re.sub(r"'([^']*)':", r'"\1":', cleaned)
+        # Remove trailing commas
+        cleaned = re.sub(r',\s*}', '}', cleaned)
+        cleaned = re.sub(r',\s*]', ']', cleaned)
+        
+        try:
+            if logger_instance:
+                logger_instance.debug("Trying cleaned JSON")
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            if logger_instance:
+                logger_instance.debug("Failed to parse cleaned JSON")
+    
+    if logger_instance:
+        logger_instance.warning("All JSON extraction strategies failed")
+    
+    return None
 
 
 def extract_and_parse_json_response(response_text: str) -> Dict[str, Any]:

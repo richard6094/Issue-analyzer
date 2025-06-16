@@ -6,8 +6,12 @@ Handles scenarios where the agent is explicitly mentioned by non-owners.
 """
 
 import logging
+import json
 from typing import Dict, Any, Optional, List
 from ..base_strategy import BaseStrategy
+from LLM.llm_provider import get_llm
+from langchain.schema import HumanMessage
+from analyzer_core.utils.json_utils import extract_json_from_llm_response
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +148,6 @@ Base prompt: {base_prompts.get('final_response', '')}
         
         logger.info(f"LLM recommended {len(recommended_actions)} actions for agent mention")
         return recommended_actions
-    
     async def _llm_analyze_mention_context(self, title: str, body: str, comment_body: str,
                                          comment_author: str, issue_author: str, labels: List[str],
                                          trigger_context: Optional[Dict[str, Any]]) -> Dict[str, Any]:        
@@ -152,9 +155,6 @@ Base prompt: {base_prompts.get('final_response', '')}
         """
         Use LLM with chain of thought to analyze agent mention context
         """
-        from LLM.llm_provider import get_llm
-        from langchain.schema import HumanMessage
-        import json
         
         context_prompt = f"""
 You are an expert at analyzing agent mentions in GitHub issues. Understand why the agent was mentioned and how to respond appropriately.
@@ -267,14 +267,12 @@ Focus on understanding the community dynamics and how to respond helpfully while
                 
         except Exception as e:
             logger.error(f"LLM mention analysis failed: {str(e)}")
-            return self._fallback_mention_analysis()
+            return self._fallback_mention_analysis()    
+    
     async def _llm_select_mention_tools(self, context_analysis: Dict[str, Any]) -> List[str]:
         """
         Use LLM to select appropriate tools for agent mention responses
         """
-        from LLM.llm_provider import get_llm
-        from langchain.schema import HumanMessage
-        import json
         
         available_tools = [
             "rag_search", "similar_issues", "regression_analysis", "code_search",
@@ -365,15 +363,13 @@ Focus on tools that provide appropriate assistance while respecting community dy
                 
         except Exception as e:
             logger.error(f"LLM tool selection failed: {str(e)}")
-            return self._fallback_mention_tools()
+            return self._fallback_mention_tools()    
+        
     async def _llm_recommend_mention_actions(self, analysis_results: Dict[str, Any], 
                                            context_analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
         Use LLM to recommend actions for agent mention responses
         """
-        from LLM.llm_provider import get_llm
-        from langchain.schema import HumanMessage
-        import json
         
         action_prompt = f"""
 You are recommending actions for responding to an agent mention. Consider community dynamics and appropriate boundaries.
