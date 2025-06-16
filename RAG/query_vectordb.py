@@ -156,6 +156,20 @@ def query_database(
     Returns:
         List of result dictionaries
     """
+    # Add debug information about database path
+    print(f"[QUERY_DATABASE] Attempting to access database at: {db_path}")
+    print(f"[QUERY_DATABASE] Database path exists: {os.path.exists(db_path)}")
+    if os.path.exists(db_path):
+        try:
+            files = os.listdir(db_path)
+            print(f"[QUERY_DATABASE] Database directory contents: {files}")
+            sqlite_file = os.path.join(db_path, "chroma.sqlite3")
+            if os.path.exists(sqlite_file):
+                size = os.path.getsize(sqlite_file)
+                print(f"[QUERY_DATABASE] chroma.sqlite3 size: {size} bytes")
+        except Exception as list_error:
+            print(f"[QUERY_DATABASE] Error listing database contents: {list_error}")
+    
     # First check if database directory exists
     if not verify_database_exists(db_path):
         print(f"Error: Database directory '{db_path}' does not exist.")

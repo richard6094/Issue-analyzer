@@ -238,6 +238,20 @@ def query_vectordb_for_regression(
     Returns:
         Context string formatted for LLM prompt
     """
+    # Add debug information about database path
+    print(f"[QUERY_VECTORDB_FOR_REGRESSION] Using default_rag_helper with db_path: {default_rag_helper.db_path}")
+    print(f"[QUERY_VECTORDB_FOR_REGRESSION] Database path exists: {os.path.exists(default_rag_helper.db_path)}")
+    if os.path.exists(default_rag_helper.db_path):
+        try:
+            files = os.listdir(default_rag_helper.db_path)
+            print(f"[QUERY_VECTORDB_FOR_REGRESSION] Database directory contents: {files}")
+            sqlite_file = os.path.join(default_rag_helper.db_path, "chroma.sqlite3")
+            if os.path.exists(sqlite_file):
+                size = os.path.getsize(sqlite_file)
+                print(f"[QUERY_VECTORDB_FOR_REGRESSION] chroma.sqlite3 size: {size} bytes")
+        except Exception as list_error:
+            print(f"[QUERY_VECTORDB_FOR_REGRESSION] Error listing database contents: {list_error}")
+    
     _, context = default_rag_helper.query_for_regression_analysis(
         issue_title=issue_title,
         issue_body=issue_body,
