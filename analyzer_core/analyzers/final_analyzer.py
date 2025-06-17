@@ -152,8 +152,8 @@ class FinalAnalyzer:
         """.strip()
     
     def _build_default_prompt(self, issue_context: str, results_summary: str) -> str:
-        """Build default final analysis prompt"""
-        return f"""
+    """Build default analysis prompt"""
+    return f"""
 You are a senior GitHub issue analyst providing comprehensive analysis and actionable recommendations.
 
 ## RESPONSE GUIDELINES:
@@ -183,13 +183,61 @@ You are a senior GitHub issue analyst providing comprehensive analysis and actio
 
 ## Response Requirements:
 
-### User Comment Guidelines:
-Your user comment should:
-1. **Start with acknowledgment**: "Thank you for providing [specific details they shared]..."
-2. **Demonstrate understanding**: "Based on your code sample showing [specific detail]..."
-3. **Provide value-added analysis**: "Looking at your reproduction steps, the issue appears to be..."
-4. **Offer actionable next steps**: "To resolve this, I recommend..."
-5. **Reference their specific context**: "Given your environment/code/setup..."
+### User Comment Guidelines - DETAILED AND READABLE FORMAT:
+
+Your user comment should be **comprehensive and detailed**, not a summary. Structure it as follows:
+
+1. **Opening Acknowledgment** (1-2 sentences)
+   - Directly reference what the user provided
+   - Use their exact terminology when possible
+
+2. **Analysis Findings** (Use clear sections with markdown headers)
+   - ### 🔍 What I Found
+   - Present each finding as a separate bullet point
+   - Include specific details from tool analysis results
+   - Reference exact issue numbers, error messages, or code patterns
+   
+3. **Similar Issues & Solutions** (If RAG/similarity tools found matches)
+   - ### 📚 Related Cases & Solutions
+   - List each similar issue with its key details:
+     - Issue number and brief description
+     - What solution worked for that case
+     - How it relates to the current issue
+   
+4. **Technical Deep Dive** (When relevant)
+   - ### 🔧 Technical Analysis
+   - Explain technical aspects in accessible language
+   - Break down complex concepts into digestible parts
+   - Use code blocks for any code examples
+   
+5. **Actionable Recommendations**
+   - ### 💡 Recommended Steps
+   - Provide numbered, step-by-step actions
+   - Include specific commands, code snippets, or configuration changes
+   - Explain WHY each step is important
+   
+6. **Additional Resources** (When available)
+   - ### 📖 Helpful Resources
+   - Link to relevant documentation
+   - Reference similar resolved issues
+   - Suggest diagnostic commands or tools
+
+**FORMATTING REQUIREMENTS**:
+- Use markdown headers (###) to organize sections
+- Use emoji icons to make sections visually distinct
+- Use bullet points for lists
+- Use code blocks for any code/commands
+- Use **bold** for emphasis on key points
+- Break long paragraphs into shorter, readable chunks
+- Include line breaks between sections for readability
+
+**CONTENT REQUIREMENTS**:
+- DO NOT summarize - provide full details
+- Include ALL relevant information from tool results
+- Explain technical concepts in user-friendly language
+- Provide specific examples rather than general statements
+- If tool found solutions, describe them in detail
+- Always mention the user with @ symbol
 
 ### Response Format:
 {{
@@ -207,10 +255,14 @@ Your user comment should:
             "priority": 1
         }}
     ],
-    "user_comment": "A helpful comment that builds on the user's provided information and offers genuine value"
+    "user_comment": "A comprehensive, well-formatted comment with detailed findings, specific examples, and actionable guidance - NOT a summary"
 }}
 
-**CRITICAL**: Your response must demonstrate that you've carefully reviewed and understood the user's contributions. Generic responses that ignore their specific details are unacceptable.
+**CRITICAL**: 
+- The user_comment should be DETAILED and INFORMATIVE, not a brief summary
+- Include specific data from tool results (issue numbers, error messages, solutions)
+- Use clear markdown formatting with sections and visual organization
+- Provide actionable, specific guidance rather than generic advice
         """.strip()
     
     def _extract_response_text(self, response) -> str:
