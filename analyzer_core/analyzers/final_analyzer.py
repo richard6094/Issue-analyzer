@@ -152,8 +152,8 @@ class FinalAnalyzer:
         """.strip()
     
     def _build_default_prompt(self, issue_context: str, results_summary: str) -> str:
-    """Build default analysis prompt"""
-    return f"""
+        """Build default analysis prompt"""
+        return f"""
 You are a senior GitHub issue analyst providing comprehensive analysis and actionable recommendations.
 
 ## RESPONSE GUIDELINES:
