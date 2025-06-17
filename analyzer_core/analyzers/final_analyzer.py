@@ -62,10 +62,11 @@ class FinalAnalyzer:
             
         Returns:
             Final analysis with recommendations and actions
-        """        
+        """          
         try:
             issue_context = prepare_issue_context(issue_data, event_name, event_action, comment_data)
-            results_summary = self._prepare_results_summary(tool_results)
+            # Pass tool_results directly without any formatting
+            raw_tool_results = str(tool_results)
             
             # Use strategy-customized prompts if available, otherwise use default
             if customized_prompts and "final_response" in customized_prompts:
@@ -73,11 +74,11 @@ class FinalAnalyzer:
                 final_analysis_prompt = self._build_strategy_prompt(
                     customized_prompts["final_response"],
                     issue_context, 
-                    results_summary
+                    raw_tool_results
                 )
             else:
                 # Use default enhanced LLM prompt for final analysis
-                final_analysis_prompt = self._build_default_prompt(issue_context, results_summary)
+                final_analysis_prompt = self._build_default_prompt(issue_context, raw_tool_results)
             
             # Use self.llm property which handles lazy initialization
             response = await self.llm.agenerate([[HumanMessage(content=final_analysis_prompt)]])
@@ -115,19 +116,94 @@ class FinalAnalyzer:
                 "confidence": 0.0,
                 "summary": f"Analysis failed: {str(e)}",
                 "user_comment": "I encountered an error while analyzing this issue. Please try again or contact support."
-            }
-    def _build_strategy_prompt(self, strategy_prompt: str, issue_context: str, results_summary: str) -> str:
-        """Build final analysis prompt using strategy-customized template"""
+            }      
+    def _build_strategy_prompt(self, strategy_prompt: str, issue_context: str, raw_tool_results: str) -> str:
+        """Build final analysis prompt using strategy-customized template with enhanced guidelines"""
         return f"""
 {strategy_prompt}
+
+## ENHANCED RESPONSE GUIDELINES:
+
+### 1. ACKNOWLEDGE USER CONTRIBUTIONS
+- **ALWAYS** acknowledge what the user has provided
+- **REFERENCE** specific code samples, reproduction steps, or data they shared
+- **SHOW** that you understand their effort in providing detailed information
+
+### 2. ANALYSIS BASED ON PROVIDED INFORMATION
+- Analyze the user's code samples, reproduction steps, and data
+- Provide insights based on what they've actually shared
+- Avoid generic responses that ignore their specific details
+
+### 3. AVOID REDUNDANT REQUESTS
+- **NEVER** ask for information the user has already provided
+- **BUILD** upon their existing contributions
+- **ENHANCE** their understanding rather than requesting basics
 
 ## Analysis Context:
 
 ### Original Issue with Comment Context:
 {issue_context}
 
-### Analysis Results:
-{results_summary}
+### Tool Results:
+{raw_tool_results}
+
+## Response Requirements:
+
+### User Comment Guidelines - DETAILED AND READABLE FORMAT:
+
+Your user comment should be **comprehensive and detailed**, not a summary. Structure it as follows:
+
+1. **Opening Acknowledgment** (1-2 sentences)
+   - Directly reference what the user provided
+   - Use their exact terminology when possible
+
+2. **Analysis Findings** (Use clear sections with markdown headers)
+   - ### 🔍 What I Found
+   - Present each finding as a separate bullet point
+   - Include specific details from tool analysis results
+   - Reference exact issue numbers, error messages, or code patterns
+   
+3. **Similar Issues & Solutions** (If RAG/similarity tools found matches)
+   - ### 📚 Related Cases & Solutions
+   - List each similar issue with its key details:
+     - Issue number and brief description
+     - What solution worked for that case
+     - How it relates to the current issue
+   
+4. **Technical Deep Dive** (When relevant)
+   - ### 🔧 Technical Analysis
+   - Explain technical aspects in accessible language
+   - Break down complex concepts into digestible parts
+   - Use code blocks for any code examples
+   
+5. **Actionable Recommendations**
+   - ### 💡 Recommended Steps
+   - Provide numbered, step-by-step actions
+   - Include specific commands, code snippets, or configuration changes
+   - Explain WHY each step is important
+   
+6. **Additional Resources** (When available)
+   - ### 📖 Helpful Resources
+   - Link to relevant documentation
+   - Reference similar resolved issues
+   - Suggest diagnostic commands or tools
+
+**FORMATTING REQUIREMENTS**:
+- Use markdown headers (###) to organize sections
+- Use emoji icons to make sections visually distinct
+- Use bullet points for lists
+- Use code blocks for any code/commands
+- Use **bold** for emphasis on key points
+- Break long paragraphs into shorter, readable chunks
+- Include line breaks between sections for readability
+
+**CONTENT REQUIREMENTS**:
+- DO NOT summarize - provide full details
+- Include ALL relevant information from tool results
+- Explain technical concepts in user-friendly language
+- Provide specific examples rather than general statements
+- If tool found solutions, describe them in detail
+- Always mention the user with @ symbol
 
 ## Response Format:
 {{
@@ -145,13 +221,18 @@ class FinalAnalyzer:
             "priority": 1
         }}
     ],
-    "user_comment": "A helpful comment that directly responds to the triggering comment and builds on the conversation"
+    "user_comment": "A comprehensive, well-formatted comment with detailed findings, specific examples, and actionable guidance - NOT a summary"
 }}
 
-**CRITICAL**: If there is a TRIGGERING COMMENT in the issue context above, your user_comment MUST directly respond to and acknowledge that specific comment. Show that you've read and understood what the user wrote in their comment.
+**CRITICAL**: 
+- If there is a TRIGGERING COMMENT in the issue context above, your user_comment MUST directly respond to and acknowledge that specific comment
+- The user_comment should be DETAILED and INFORMATIVE, not a brief summary
+- Include specific data from tool results (issue numbers, error messages, solutions)
+- Use clear markdown formatting with sections and visual organization
+- Provide actionable, specific guidance rather than generic advice
         """.strip()
-    
-    def _build_default_prompt(self, issue_context: str, results_summary: str) -> str:
+
+    def _build_default_prompt(self, issue_context: str, raw_tool_results: str) -> str:
         """Build default analysis prompt"""
         return f"""
 You are a senior GitHub issue analyst providing comprehensive analysis and actionable recommendations.
@@ -178,8 +259,8 @@ You are a senior GitHub issue analyst providing comprehensive analysis and actio
 ### Original Issue:
 {issue_context}
 
-### Analysis Results:
-{results_summary}
+### Tool Results:
+{raw_tool_results}
 
 ## Response Requirements:
 
@@ -272,20 +353,4 @@ Your user comment should be **comprehensive and detailed**, not a summary. Struc
         elif hasattr(response.generations[0][0], 'message') and hasattr(response.generations[0][0].message, 'content'):
             return response.generations[0][0].message.content
         else:
-            return str(response.generations[0][0])
-    
-    def _prepare_results_summary(self, tool_results: List[ToolResult]) -> str:
-        """Return tool results directly without processing"""
-        summary_parts = []
-        
-        for result in tool_results:
-            if result.success:
-                summary_parts.append(f"""
-**{result.tool.value}** (Success, Confidence: {result.confidence:.1%}):
-{result.data}
-""")
-            else:
-                summary_parts.append(f"""
-**{result.tool.value}** (Failed): {result.error_message}
-""")
-        return "\n".join(summary_parts)
+            return str(response.generations[0][0])    

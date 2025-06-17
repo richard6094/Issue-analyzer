@@ -81,7 +81,7 @@ class RAGSearchTool(BaseTool):
         try:
             # Dynamic import of LLM to avoid circular imports
             from LLM.llm_provider import get_llm
-            llm = get_llm(provider="azure", model_type="gpt4omini")
+            llm = get_llm(provider="azure")
             
             # Build intelligent analysis prompt            
             prompt = self._build_analysis_prompt(issue_data, rag_context, results_count)
