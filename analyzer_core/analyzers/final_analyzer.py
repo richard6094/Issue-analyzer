@@ -216,45 +216,24 @@ Your user comment should:
     def _extract_response_text(self, response) -> str:
         """Extract text from LangChain response"""
         if hasattr(response.generations[0][0], 'text'):
-            return response.generations[0][0].text
+            return response.generations[0][0].text        
         elif hasattr(response.generations[0][0], 'message') and hasattr(response.generations[0][0].message, 'content'):
             return response.generations[0][0].message.content
         else:
             return str(response.generations[0][0])
     
     def _prepare_results_summary(self, tool_results: List[ToolResult]) -> str:
-        """Prepare a summary of tool results for LLM analysis"""
+        """Return tool results directly without processing"""
         summary_parts = []
         
         for result in tool_results:
             if result.success:
                 summary_parts.append(f"""
 **{result.tool.value}** (Success, Confidence: {result.confidence:.1%}):
-{self._summarize_tool_data(result.data)}
+{result.data}
 """)
             else:
                 summary_parts.append(f"""
 **{result.tool.value}** (Failed): {result.error_message}
 """)
-        
-        return "\n".join(summary_parts)
-    
-    def _summarize_tool_data(self, data: Dict[str, Any]) -> str:
-        """Summarize tool data for LLM consumption"""
-        if not data:
-            return "No data returned"
-        
-        # Customize based on common data patterns
-        summary_parts = []
-        
-        for key, value in data.items():
-            if isinstance(value, list):
-                summary_parts.append(f"- {key}: {len(value)} items")
-            elif isinstance(value, dict):
-                summary_parts.append(f"- {key}: {len(value)} properties")
-            elif isinstance(value, str) and len(value) > 100:
-                summary_parts.append(f"- {key}: {value[:100]}...")
-            else:
-                summary_parts.append(f"- {key}: {value}")
-        
         return "\n".join(summary_parts)
