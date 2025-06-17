@@ -203,7 +203,8 @@ class RagQueryHelper:
                 if useful_related:
                     context_parts.append("\nRELATED INFORMATION:")
                     
-                    for rel in useful_related[:3]:  # Limit to 3 related chunks
+                    # for rel in useful_related[:3]:  # Limit to 3 related chunks
+                    for rel in useful_related:  # No Limit, include all
                         rel_type = rel["metadata"].get("chunk_type", "information")
                         context_parts.append(f"\n- {rel_type.upper()}: {rel['document'][:300]}")
             

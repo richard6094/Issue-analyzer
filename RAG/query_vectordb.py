@@ -152,7 +152,7 @@ def query_database(
         azure_openai_deployment: Azure OpenAI deployment name for embeddings
         azure_vision_deployment: Azure OpenAI deployment name for vision/chat models
         include_all_issue_chunks: Whether to include all chunks from the same issue
-          Returns:
+    Returns:
         List of result dictionaries
     """
     # First check if database directory exists
