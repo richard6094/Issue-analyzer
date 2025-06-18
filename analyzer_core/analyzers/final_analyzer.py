@@ -151,7 +151,11 @@ class FinalAnalyzer:
 
 ### User Comment Guidelines - DETAILED AND READABLE FORMAT:
 
-Your user comment should be **comprehensive and detailed**, not a summary. Structure it as follows:
+Your user comment should be **comprehensive and detailed**, not a summary. Some sample sections are as follows, and you could pick any from them or redesign it as you see fit:
+
+If the user has defined a specific demand, focus on that and DO NOT pick unrelated sections.
+
+Here are some sample sections you could include in your user comment:
 
 1. **Opening Acknowledgment** (1-2 sentences)
    - Directly reference what the user provided
@@ -167,8 +171,10 @@ Your user comment should be **comprehensive and detailed**, not a summary. Struc
    - ### 📚 Related Cases & Solutions
    - List each similar issue with its key details:
      - Issue number and brief description
+     - **INCLUDE clickable GitHub links when available** (e.g., "Issue #123: https://github.com/...")
      - What solution worked for that case
      - How it relates to the current issue
+     - **Always use the exact GitHub links provided in the tool results**
    
 4. **Technical Deep Dive** (When relevant)
    - ### 🔧 Technical Analysis
@@ -185,7 +191,6 @@ Your user comment should be **comprehensive and detailed**, not a summary. Struc
 6. **Additional Resources** (When available)
    - ### 📖 Helpful Resources
    - Link to relevant documentation
-   - Reference similar resolved issues
    - Suggest diagnostic commands or tools
 
 **FORMATTING REQUIREMENTS**:
@@ -200,10 +205,12 @@ Your user comment should be **comprehensive and detailed**, not a summary. Struc
 **CONTENT REQUIREMENTS**:
 - DO NOT summarize - provide full details
 - Include ALL relevant information from tool results
+- **ALWAYS include clickable GitHub links when referencing similar issues**
 - Explain technical concepts in user-friendly language
 - Provide specific examples rather than general statements
 - If tool found solutions, describe them in detail
 - Always mention the user with @ symbol
+- **Extract and use GitHub issue links provided in tool results**
 
 ## Response Format:
 {{
@@ -268,44 +275,45 @@ You are a senior GitHub issue analyst providing comprehensive analysis and actio
 
 Your user comment should be **comprehensive and detailed**, not a summary. Some sample sections are as follows, and you could pick any from them or redesign it as you see fit:
 
-If the user has defined a specific demand, focus on that.
+If the user has defined a specific demand, focus on that and DO NOT pick unrelated sections.
 
 Here are some sample sections you could include in your user comment:
 
-1. **Opening Acknowledgment** (1-2 sentences)
+**Opening Acknowledgment** (1-2 sentences)
    - Directly reference what the user provided
    - Use their exact terminology when possible
 
-2. **Analysis Findings** (Use clear sections with markdown headers)
+**Analysis Findings** (Use clear sections with markdown headers)
    - ### 🔍 What I Found
    - Present each finding as a separate bullet point
    - Include specific details from tool analysis results
    - Reference exact issue numbers, error messages, or code patterns
    
-3. **Similar Issues & Solutions** (If RAG/similarity tools found matches)
+**Similar Issues & Solutions** (If RAG/similarity tools found matches)
    - ### 📚 Related Cases & Solutions
    - List each similar issue with its key details:
      - Issue number and brief description
+     - **INCLUDE clickable GitHub links when available** (e.g., "Issue #123: https://github.com/...")
      - What solution worked for that case
      - How it relates to the current issue
+     - **Always use the exact GitHub links provided in the tool results**
    
-4. **Technical Deep Dive** (When relevant)
+**Technical Deep Dive** (When relevant)
    - ### 🔧 Technical Analysis
    - Explain technical aspects in accessible language
    - Break down complex concepts into digestible parts
    - Use code blocks for any code examples
    
-5. **Actionable Recommendations**
+**Actionable Recommendations**
    - ### 💡 Recommended Steps
    - Provide numbered, step-by-step actions
    - Include specific commands, code snippets, or configuration changes
    - Explain WHY each step is important
    
-6. **Additional Resources** (When available)
-   - ### 📖 Helpful Resources
-   - Link to relevant documentation
-   - Reference similar resolved issues
-   - Suggest diagnostic commands or tools
+**Additional Resources** (When available)
+    - ### 📖 Helpful Resources
+    - Link to relevant documentation
+    - Suggest diagnostic commands or tools
 
 Or you can use your own structure as you see fit, but make sure to follow the guidelines below.
 
@@ -321,10 +329,12 @@ Or you can use your own structure as you see fit, but make sure to follow the gu
 **CONTENT REQUIREMENTS**:
 - DO NOT summarize - provide full details
 - Include ALL relevant information from tool results
+- **ALWAYS include clickable GitHub links when referencing similar issues**
 - Explain technical concepts in user-friendly language
 - Provide specific examples rather than general statements
 - If tool found solutions, describe them in detail
 - Always mention the user with @ symbol
+- **Extract and use GitHub issue links provided in tool results**
 
 ### Response Format:
 {{
@@ -359,4 +369,4 @@ Or you can use your own structure as you see fit, but make sure to follow the gu
         elif hasattr(response.generations[0][0], 'message') and hasattr(response.generations[0][0].message, 'content'):
             return response.generations[0][0].message.content
         else:
-            return str(response.generations[0][0])    
+            return str(response.generations[0][0])
