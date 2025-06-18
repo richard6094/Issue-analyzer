@@ -122,6 +122,43 @@ class FinalAnalyzer:
         return f"""
 {strategy_prompt}
 
+{self._get_common_response_guidelines()}
+
+## Analysis Context:
+
+### Original Issue with Comment Context:
+{issue_context}
+
+### Tool Results:
+{raw_tool_results}
+
+{self._get_response_format()}
+        """.strip()
+
+    def _build_default_prompt(self, issue_context: str, raw_tool_results: str) -> str:
+        """Build default analysis prompt"""
+        common_guidelines = self._get_common_response_guidelines()
+        response_format = self._get_response_format()
+        
+        return f"""
+You are a senior GitHub issue analyst providing comprehensive analysis and actionable recommendations.
+
+{common_guidelines}
+
+## Analysis Context:
+
+### Original Issue with Comment Context:
+{issue_context}
+
+### Tool Results:
+{raw_tool_results}
+
+{response_format}
+        """.strip()
+    
+    def _get_common_response_guidelines(self) -> str:
+        """Get common response guidelines used by both strategy and default prompts"""
+        return """
 ## ENHANCED RESPONSE GUIDELINES:
 
 ### 1. ACKNOWLEDGE USER CONTRIBUTIONS
@@ -138,14 +175,6 @@ class FinalAnalyzer:
 - **NEVER** ask for information the user has already provided
 - **BUILD** upon their existing contributions
 - **ENHANCE** their understanding rather than requesting basics
-
-## Analysis Context:
-
-### Original Issue with Comment Context:
-{issue_context}
-
-### Tool Results:
-{raw_tool_results}
 
 ## Response Requirements:
 
@@ -189,9 +218,11 @@ Here are some sample sections you could include in your user comment:
    - Explain WHY each step is important
    
 **Additional Resources** (When available)
-    - ### 📖 Helpful Resources
-    - Link to relevant documentation
-    - Suggest diagnostic commands or tools
+   - ### 📖 Helpful Resources
+   - Link to relevant documentation
+   - **Reference similar resolved issues with clickable GitHub links**
+   - Suggest diagnostic commands or tools
+   - **Always include GitHub issue links when referencing specific issues**
 
 Or you can use your own structure as you see fit, but make sure to follow the guidelines below.
 
@@ -213,9 +244,13 @@ Or you can use your own structure as you see fit, but make sure to follow the gu
 - If tool found solutions, describe them in detail
 - Always mention the user with @ symbol
 - **Extract and use GitHub issue links provided in tool results**
+"""
 
+    def _get_response_format(self) -> str:
+        """Get the common response format specification"""
+        return """
 ## Response Format:
-{{
+{
     "issue_type": "bug_report|feature_request|question|documentation|regression|security|performance",
     "severity": "low|medium|high|critical",
     "confidence": 0.0-1.0,
@@ -224,14 +259,14 @@ Or you can use your own structure as you see fit, but make sure to follow the gu
     "root_cause": "Likely root cause based on provided information",
     "recommended_labels": ["label1", "label2", ...],
     "recommended_actions": [
-        {{
+        {
             "action": "add_label|assign_user|close_issue|request_info",
             "details": "Specific details for the action",
             "priority": 1
-        }}
+        }
     ],
     "user_comment": "A comprehensive, well-formatted comment with detailed findings, specific examples, and actionable guidance - NOT a summary"
-}}
+}
 
 **CRITICAL**: 
 - If there is a TRIGGERING COMMENT in the issue context above, your user_comment MUST directly respond to and acknowledge that specific comment
@@ -239,130 +274,7 @@ Or you can use your own structure as you see fit, but make sure to follow the gu
 - Include specific data from tool results (issue numbers, error messages, solutions)
 - Use clear markdown formatting with sections and visual organization
 - Provide actionable, specific guidance rather than generic advice
-        """.strip()
-
-    def _build_default_prompt(self, issue_context: str, raw_tool_results: str) -> str:
-        """Build default analysis prompt"""
-        return f"""
-You are a senior GitHub issue analyst providing comprehensive analysis and actionable recommendations.
-
-## RESPONSE GUIDELINES:
-
-### 1. ACKNOWLEDGE USER CONTRIBUTIONS
-- **ALWAYS** acknowledge what the user has provided
-- **REFERENCE** specific code samples, reproduction steps, or data they shared
-- **SHOW** that you understand their effort in providing detailed information
-
-### 2. ANALYSIS BASED ON PROVIDED INFORMATION
-- Analyze the user's code samples, reproduction steps, and data
-- Provide insights based on what they've actually shared
-- Avoid generic responses that ignore their specific details
-
-### 3. AVOID REDUNDANT REQUESTS
-- **NEVER** ask for information the user has already provided
-- **BUILD** upon their existing contributions
-- **ENHANCE** their understanding rather than requesting basics
-
-## Analysis Context:
-
-### Original Issue:
-{issue_context}
-
-### Tool Results:
-{raw_tool_results}
-
-## Response Requirements:
-
-### User Comment Guidelines - DETAILED AND READABLE FORMAT:
-
-Your user comment should be **comprehensive and detailed**, not a summary. Some sample sections are as follows, and you could pick any from them or redesign it as you see fit:
-
-If the user has defined a specific demand, focus on that and DO NOT pick unrelated sections.
-
-Here are some sample sections you could include in your user comment:
-
-**Opening Acknowledgment** (1-2 sentences)
-   - Directly reference what the user provided
-   - Use their exact terminology when possible
-
-**Analysis Findings** (Use clear sections with markdown headers)
-   - ### 🔍 What I Found
-   - Present each finding as a separate bullet point
-   - Include specific details from tool analysis results
-   - Reference exact issue numbers, error messages, or code patterns
-   
-**Similar Issues & Solutions** (If RAG/similarity tools found matches)
-   - ### 📚 Related Cases & Solutions
-   - List each similar issue with its key details:
-     - Issue number and brief description
-     - **INCLUDE clickable GitHub links when available** (e.g., "Issue #123: https://github.com/...")
-     - What solution worked for that case
-     - How it relates to the current issue
-     - **Always use the exact GitHub links provided in the tool results**
-   
-**Technical Deep Dive** (When relevant)
-   - ### 🔧 Technical Analysis
-   - Explain technical aspects in accessible language
-   - Break down complex concepts into digestible parts
-   - Use code blocks for any code examples
-   
-**Actionable Recommendations**
-   - ### 💡 Recommended Steps
-   - Provide numbered, step-by-step actions
-   - Include specific commands, code snippets, or configuration changes
-   - Explain WHY each step is important
-   
-**Additional Resources** (When available)
-    - ### 📖 Helpful Resources
-    - Link to relevant documentation
-    - Suggest diagnostic commands or tools
-
-Or you can use your own structure as you see fit, but make sure to follow the guidelines below.
-
-**FORMATTING REQUIREMENTS**:
-- Use markdown headers (###) to organize sections
-- Use emoji icons to make sections visually distinct
-- Use bullet points for lists
-- Use code blocks for any code/commands
-- Use **bold** for emphasis on key points
-- Break long paragraphs into shorter, readable chunks
-- Include line breaks between sections for readability
-
-**CONTENT REQUIREMENTS**:
-- DO NOT summarize - provide full details
-- Include ALL relevant information from tool results
-- **ALWAYS include clickable GitHub links when referencing similar issues**
-- Explain technical concepts in user-friendly language
-- Provide specific examples rather than general statements
-- If tool found solutions, describe them in detail
-- Always mention the user with @ symbol
-- **Extract and use GitHub issue links provided in tool results**
-
-### Response Format:
-{{
-    "issue_type": "bug_report|feature_request|question|documentation|regression|security|performance",
-    "severity": "low|medium|high|critical",
-    "confidence": 0.0-1.0,
-    "summary": "Brief summary acknowledging user's provided information and key findings",
-    "detailed_analysis": "Detailed analysis based on user's actual contributions and tool results",
-    "root_cause": "Likely root cause based on provided information",
-    "recommended_labels": ["label1", "label2", ...],
-    "recommended_actions": [
-        {{
-            "action": "add_label|assign_user|close_issue|request_info",
-            "details": "Specific details for the action",
-            "priority": 1
-        }}
-    ],
-    "user_comment": "A comprehensive, well-formatted comment with detailed findings, specific examples, and actionable guidance - NOT a summary"
-}}
-
-**CRITICAL**: 
-- The user_comment should be DETAILED and INFORMATIVE, not a brief summary
-- Include specific data from tool results (issue numbers, error messages, solutions)
-- Use clear markdown formatting with sections and visual organization
-- Provide actionable, specific guidance rather than generic advice
-        """.strip()
+"""
     
     def _extract_response_text(self, response) -> str:
         """Extract text from LangChain response"""
