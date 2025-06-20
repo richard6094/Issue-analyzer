@@ -43,6 +43,9 @@ from image_recognition.image_recognition_provider import (
     is_valid_image_url
 )
 
+# Import token optimization utilities
+from analyzer_core.utils.token_optimizer import TokenOptimizer, create_token_optimizer
+
 class ProgressTracker:
     """
     Track and display real-time progress during database creation.
@@ -276,8 +279,7 @@ class IssueVectorDatabase:
     """
     
     def __init__(self, 
-                 issues_json_path: str, 
-                 db_path: str = "./chroma_db",
+                 issues_json_path: str,                 db_path: str = "./chroma_db",
                  collection_name: str = "github_issues",
                  openai_api_key: Optional[str] = None,
                  use_openai_embeddings: bool = True,
@@ -286,9 +288,9 @@ class IssueVectorDatabase:
                  azure_deployment: Optional[str] = None,
                  azure_vision_deployment: Optional[str] = "gpt-4o", 
                  chunk_overlap: int = 100,
-                 max_tokens_per_chunk: int = 1000,
-                 use_llm_chunking: bool = False):  # Changed default to False
-        """
+                 max_tokens_per_chunk: Optional[int] = None,  # Now optional, will be auto-calculated
+                 use_llm_chunking: bool = False,  # Changed default to False
+                 embedding_model_name: str = "text-embedding-3-small"):  # New parameter        """
         Initialize the Issue Vector Database.
         
         Args:
@@ -301,9 +303,10 @@ class IssueVectorDatabase:
             azure_endpoint: Azure OpenAI API endpoint (required if use_azure_openai is True)
             azure_deployment: Azure OpenAI deployment name for embeddings (required if use_azure_openai is True)
             azure_vision_deployment: Azure OpenAI deployment name for vision/chat models (required for image analysis)
-            chunk_overlap: Number of characters to overlap between chunks
-            max_tokens_per_chunk: Maximum tokens per chunk
+            chunk_overlap: Number of tokens to overlap between chunks
+            max_tokens_per_chunk: Maximum tokens per chunk (auto-calculated if None)
             use_llm_chunking: Whether to use LLM-based chunking (False by default, uses pattern-based chunking)
+            embedding_model_name: Name of the embedding model for token optimization
         """
         self.issues_json_path = issues_json_path
         self.db_path = db_path
@@ -315,8 +318,27 @@ class IssueVectorDatabase:
         self.azure_deployment = azure_deployment or os.environ.get("AZURE_OPENAI_DEPLOYMENT") or "text-embedding-3-small"
         self.azure_vision_deployment = azure_vision_deployment or os.environ.get("AZURE_OPENAI_VISION_DEPLOYMENT") or "gpt-4o"
         self.chunk_overlap = chunk_overlap
-        self.max_tokens_per_chunk = max_tokens_per_chunk
         self.use_llm_chunking = use_llm_chunking
+        self.embedding_model_name = embedding_model_name
+        
+        # Initialize token optimizer for accurate token counting and chunking
+        model_name = self.azure_deployment if use_azure_openai else embedding_model_name
+        self.token_optimizer = create_token_optimizer(
+            model_name=model_name,
+            safety_margin=0.95,  # Use 95% of model capacity for safety
+            min_chunk_tokens=50,  # Minimum meaningful chunk size
+            preferred_overlap_tokens=chunk_overlap
+        )
+        
+        # Set max tokens per chunk from optimizer if not provided
+        self.max_tokens_per_chunk = max_tokens_per_chunk or self.token_optimizer.effective_max_tokens
+        
+        print(f"Token optimization enabled:")
+        print(f"  Model: {model_name}")
+        print(f"  Max tokens per chunk: {self.max_tokens_per_chunk}")
+        print(f"  Chunk overlap: {chunk_overlap} tokens")
+        print(f"  Token counter: {type(self.token_optimizer.token_counter).__name__}")
+        
         
         # Initialize ChromaDB client
         self.client = chromadb.PersistentClient(path=db_path)
@@ -412,19 +434,31 @@ class IssueVectorDatabase:
             issues = json.load(f)
         print(f"Loaded {len(issues)} issues from {self.issues_json_path}")
         return issues
-    
-    def _simple_tokenize(self, text: str) -> List[str]:
+      def _simple_tokenize(self, text: str) -> List[str]:
         """
-        Simple tokenization for estimating token count.
+        Accurate tokenization using the token optimizer.
         
         Args:
             text: Text to tokenize
             
         Returns:
-            List of tokens
+            List of tokens (for backward compatibility, returns word split)
         """
-        # This is a simple approximation - not as accurate as a real tokenizer
+        # For backward compatibility with existing code that expects a list
+        # but use accurate token counting internally
         return text.split()
+    
+    def count_tokens(self, text: str) -> int:
+        """
+        Count tokens accurately using the token optimizer.
+        
+        Args:
+            text: Text to count tokens for
+            
+        Returns:
+            Accurate token count
+        """
+        return self.token_optimizer.count_tokens(text)
     
     def identify_semantic_boundaries(self, text: str) -> List[int]:
         """
@@ -1067,10 +1101,9 @@ Return your response as a JSON object with a 'segments' array, where each elemen
             print(f"Error using LLM for text segmentation: {str(e)}")
             print("Falling back to pattern-based chunking.")
             return self.pattern_based_segment_text(text)
-            
-    def pattern_based_segment_text(self, text: str) -> List[Dict[str, Any]]:
+              def pattern_based_segment_text(self, text: str) -> List[Dict[str, Any]]:
         """
-        Segment text into semantic chunks using pattern-based approach.
+        Segment text into semantic chunks using pattern-based approach with optimized token handling.
         Preserves image references and their surrounding context.
         
         Args:
@@ -1079,101 +1112,73 @@ Return your response as a JSON object with a 'segments' array, where each elemen
         Returns:
             List of segment dictionaries with text and type
         """
-        # Find semantic boundaries
-        boundaries = self.identify_semantic_boundaries(text)
+        # Use token optimizer for intelligent chunking
+        chunks = self.token_optimizer.smart_chunk_text(
+            text, 
+            overlap_tokens=self.chunk_overlap
+        )
         
-        # If no boundaries found, check if text is too long
-        if not boundaries:
-            if len(self._simple_tokenize(text)) > self.max_tokens_per_chunk:
-                # Split by paragraphs
-                paragraphs = text.split("\n\n")
-                segments = []
-                current_segment = ""
-                for paragraph in paragraphs:
-                    # Check if adding this paragraph would exceed token limit
-                    if len(self._simple_tokenize(current_segment + paragraph)) > self.max_tokens_per_chunk:
-                        if current_segment:  # Only add if we have content
-                            segments.append({
-                                "text": current_segment,
-                                "type": self.identify_chunk_type(current_segment)
-                            })
-                            current_segment = paragraph + "\n\n"
-                        else:
-                            # Paragraph itself is too long, split it further
-                            segments.append({
-                                "text": paragraph,
-                                "type": self.identify_chunk_type(paragraph)
-                            })
-                    else:
-                        current_segment += paragraph + "\n\n"
-                
-                # Add the last segment if any
-                if current_segment:
-                    segments.append({
-                        "text": current_segment,
-                        "type": self.identify_chunk_type(current_segment)
-                    })
-                
-                return segments
-            else:
-                # Text is small enough to be a single chunk
-                return [{
-                    "text": text,
-                    "type": self.identify_chunk_type(text)
-                }]
+        if not chunks:
+            return []
         
-        # Create segments based on semantic boundaries
+        # Convert token optimizer chunks to our format
         segments = []
-        start_pos = 0
-        
-        for boundary in boundaries:
-            # Check if we should split at this boundary
-            if boundary - start_pos > 50:  # Only create chunks that have meaningful content
-                segment_text = text[start_pos:boundary].strip()
-                
-                # Only add non-empty segments
-                if segment_text:
-                    # Check for image references in this segment
-                    has_image = bool(extract_image_urls(segment_text))
-                    
-                    # Determine chunk type
-                    chunk_type = self.identify_chunk_type(segment_text)
-                    
-                    # Mark if this is an image chunk
-                    if has_image:
-                        chunk_type = "image_content" if chunk_type == "description" else f"{chunk_type}_with_image"
-                    
-                    segments.append({
-                        "text": segment_text,
-                        "type": chunk_type
-                    })
+        for chunk in chunks:
+            chunk_text = chunk["text"]
             
-            start_pos = boundary
+            # Find semantic boundaries within large chunks if needed
+            if chunk["token_count"] > self.max_tokens_per_chunk * 0.8:  # If chunk is close to limit
+                sub_boundaries = self.identify_semantic_boundaries(chunk_text)
+                if sub_boundaries:
+                    # Split at semantic boundaries
+                    start_pos = 0
+                    for boundary in sub_boundaries:
+                        if boundary - start_pos > 50:  # Only create meaningful segments
+                            segment_text = chunk_text[start_pos:boundary].strip()
+                            if segment_text:
+                                # Check for image references
+                                has_image = bool(extract_image_urls(segment_text))
+                                chunk_type = self.identify_chunk_type(segment_text)
+                                if has_image:
+                                    chunk_type = "image_content" if chunk_type == "description" else f"{chunk_type}_with_image"
+                                
+                                segments.append({
+                                    "text": segment_text,
+                                    "type": chunk_type
+                                })
+                            start_pos = boundary
+                    
+                    # Add final segment
+                    if start_pos < len(chunk_text):
+                        final_segment = chunk_text[start_pos:].strip()
+                        if final_segment:
+                            has_image = bool(extract_image_urls(final_segment))
+                            chunk_type = self.identify_chunk_type(final_segment)
+                            if has_image:
+                                chunk_type = "image_content" if chunk_type == "description" else f"{chunk_type}_with_image"
+                            
+                            segments.append({
+                                "text": final_segment,
+                                "type": chunk_type
+                            })
+                    continue
+            
+            # For regular chunks, just determine type
+            has_image = bool(extract_image_urls(chunk_text))
+            chunk_type = self.identify_chunk_type(chunk_text)
+            if has_image:
+                chunk_type = "image_content" if chunk_type == "description" else f"{chunk_type}_with_image"
+            
+            segments.append({
+                "text": chunk_text,
+                "type": chunk_type
+            })
         
-        # Add the final segment if needed
-        if start_pos < len(text):
-            final_segment = text[start_pos:].strip()
-            if final_segment:
-                # Check for image references in this segment
-                has_image = bool(extract_image_urls(final_segment))
-                
-                # Determine chunk type
-                chunk_type = self.identify_chunk_type(final_segment)
-                
-                # Mark if this is an image chunk
-                if has_image:
-                    chunk_type = "image_content" if chunk_type == "description" else f"{chunk_type}_with_image"
-                
-                segments.append({
-                    "text": final_segment,
-                    "type": chunk_type
-                })
-        
-        # Merge very small segments with their neighbors
+        # Merge very small segments with their neighbors (but preserve image segments)
         if len(segments) > 1:
             i = 0
             while i < len(segments) - 1:
-                current_len = len(self._simple_tokenize(segments[i]["text"]))
+                current_token_count = self.count_tokens(segments[i]["text"])
                 
                 # Skip processing segments with images - keep them separate
                 if "image" in segments[i]["type"] or "image" in segments[i+1]["type"]:
@@ -1181,8 +1186,8 @@ Return your response as a JSON object with a 'segments' array, where each elemen
                     continue
                 
                 # If current segment is very small, merge with next
-                if current_len < 50:
-                    segments[i+1]["text"] = segments[i]["text"] + "\n" + segments[i+1]["text"]
+                if current_token_count < self.token_optimizer.min_chunk_tokens:
+                    segments[i+1]["text"] = segments[i]["text"] + "\n\n" + segments[i+1]["text"]
                     segments.pop(i)
                 else:
                     i += 1

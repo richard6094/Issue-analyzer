@@ -11,6 +11,7 @@ from typing import Dict, Any, Optional, List, Union
 from chromadb.config import Settings
 from .base_tool import BaseTool
 from ..utils.json_utils import extract_json_from_llm_response
+from ..utils.token_optimizer import create_token_optimizer, validate_query
 
 
 class RAGTool(BaseTool):
@@ -155,16 +156,16 @@ class RAGTool(BaseTool):
             )
             collection = client.get_or_create_collection(name=collection_name)
             # Try to get count (basic operation)
-            collection.count()
+            collection.count()            
             return True
         except Exception as e:
             self.logger.error(f"Database connection test failed: {e}")
             return False
     
-    def query_database(self, query_text: str, database_name: str = None, 
+    def query_database(self, query_text: str, database_name: str = None,
                       n_results: int = 5, include_metadata: bool = True) -> Dict[str, Any]:
         """
-        Query a specific database
+        Query a specific database with token length protection
         
         Args:
             query_text: Text to search for
@@ -186,6 +187,36 @@ class RAGTool(BaseTool):
             
             db_info = self.database_registry[db_name]
             
+            # === QUERY TOKEN PROTECTION ===
+            # Get embedding model info from database config
+            embedding_model = db_info.get('embedding_model', 'text-embedding-3-small')
+            
+            # Validate query token length
+            is_valid, token_count, validation_message = validate_query(query_text, embedding_model)
+            self.logger.info(f"Query validation for '{db_name}': {validation_message}")
+            
+            # Track original query for reporting
+            original_query = query_text
+            was_truncated = False
+            
+            if not is_valid:
+                # Try to truncate the query
+                token_optimizer = create_token_optimizer(embedding_model)
+                truncated_query, was_truncated, truncate_message = token_optimizer.truncate_query_if_needed(query_text)
+                
+                if was_truncated:
+                    self.logger.warning(f"Query truncated for database '{db_name}': {truncate_message}")
+                    query_text = truncated_query
+                else:
+                    return {
+                        "error": f"Query too long and cannot be truncated effectively",
+                        "database": db_name,
+                        "token_count": token_count,
+                        "max_tokens": token_optimizer.effective_max_tokens,
+                        "suggestion": "Please shorten your query"
+                    }
+            # === END QUERY PROTECTION ===
+            
             # Connect to database
             client = chromadb.PersistentClient(
                 path=db_info['path'],
@@ -201,8 +232,19 @@ class RAGTool(BaseTool):
                 include=['documents', 'metadatas', 'distances'] if include_metadata else ['documents']
             )
             
-            # Format results
+            # Format results with token info
             formatted_results = self._format_query_results(results, db_name, query_text)
+            
+            # Add token protection info to results
+            formatted_results['token_info'] = {
+                'original_query_tokens': token_count if not was_truncated else create_token_optimizer(embedding_model).count_tokens(original_query),
+                'processed_query_tokens': token_count if not was_truncated else create_token_optimizer(embedding_model).count_tokens(query_text),
+                'was_truncated': was_truncated,
+                'embedding_model': embedding_model
+            }
+            
+            if was_truncated:
+                formatted_results['warnings'] = [f"Query was truncated due to token length limits"]
             
             self.logger.info(f"Query executed successfully on database '{db_name}', found {len(results['documents'][0])} results")
             

@@ -36,6 +36,9 @@ from image_recognition.image_recognition_provider import (
     process_text_with_images
 )
 
+# Import token optimization utilities for query protection
+from analyzer_core.utils.token_optimizer import create_token_optimizer, validate_query
+
 def format_search_result(result: Dict, index: int, related_results: List[Dict] = None, full_related: bool = False) -> str:
     """
     Format a single search result for display, including related chunks.
@@ -136,7 +139,7 @@ def query_database(
     include_all_issue_chunks: bool = False
 ) -> List[Dict[str, Any]]:
     """
-    Query the vector database.
+    Query the vector database with token length protection.
     
     Args:
         db_path: Path to ChromaDB directory
@@ -155,6 +158,30 @@ def query_database(
     Returns:
         List of result dictionaries
     """
+    # === QUERY TOKEN PROTECTION ===
+    # Determine the model name for token validation
+    model_name = azure_openai_deployment if use_azure_openai else "text-embedding-3-small"
+    
+    # Validate query token length
+    is_valid, token_count, validation_message = validate_query(query, model_name)
+    print(f"Query validation: {validation_message}")
+    
+    if not is_valid:
+        # Try to truncate the query
+        token_optimizer = create_token_optimizer(model_name)
+        truncated_query, was_truncated, truncate_message = token_optimizer.truncate_query_if_needed(query)
+        
+        if was_truncated:
+            print(f"⚠️  {truncate_message}")
+            print(f"Using truncated query for search...")
+            query = truncated_query
+        else:
+            print(f"❌ Query is too long and cannot be truncated effectively.")
+            print(f"Please shorten your query to under {token_optimizer.effective_max_tokens} tokens.")
+            return []
+    
+    # === END QUERY PROTECTION ===
+    
     # First check if database directory exists
     if not verify_database_exists(db_path):
         print(f"Error: Database directory '{db_path}' does not exist.")
