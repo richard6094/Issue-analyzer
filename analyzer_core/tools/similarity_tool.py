@@ -12,40 +12,29 @@ from ..utils.json_utils import extract_json_from_llm_response
 
 
 class SimilarIssuesSearchTool(BaseTool):
-    """Similar issues search tool for finding related issues"""
-    
+    """Similar issues search tool for finding related issues"""      
     def __init__(self):
         super().__init__("similar_issues")
-        # Get repository information from environment variables
+        # Hardcoded repository information for OfficeDev/office-js
+        # This is the default repository for similar issues analysis
+        self.default_repo_owner = "OfficeDev"
+        self.default_repo_name = "office-js"
+        
+        # Get repository information from environment variables as fallback
         self.repo_full_name = os.environ.get("GITHUB_REPOSITORY", "")
-        self.repo_owner = ""
-        self.repo_name = ""
+        self.env_repo_owner = ""
+        self.env_repo_name = ""
         if self.repo_full_name and "/" in self.repo_full_name:
-            self.repo_owner, self.repo_name = self.repo_full_name.split("/", 1)
+            self.env_repo_owner, self.env_repo_name = self.repo_full_name.split("/", 1)
+          # Allow override for the correct repository (this should be set based on the issue context)
+        # This can be configured when we know the correct repository for similar issues
+        self.target_repo_owner = None
+        self.target_repo_name = None
 
-    def _build_issue_link(self, issue_number: str) -> str:
-        """Build GitHub issue link from issue number"""
-        if self.repo_owner and self.repo_name and issue_number:
-            return f"https://github.com/{self.repo_owner}/{self.repo_name}/issues/{issue_number}"
-        return f"Issue #{issue_number}"
-        
-    def _enhance_context_with_links(self, context: str) -> str:
-        """Enhance context string by adding clickable GitHub issue links"""
-        if not context or not self.repo_owner or not self.repo_name:
-            return context
-        
-        # Pattern to find issue numbers in the format "Issue: #123 - Title" from format_search_result
-        issue_pattern = r'Issue: #(\d+)(?:\s*-\s*[^\n]*)?'
-        
-        def replace_with_link(match):
-            issue_num = match.group(1)
-            link = self._build_issue_link(issue_num)
-            # Replace the entire match with the original text plus the link
-            original_text = match.group(0)
-            return f"{original_text}\nGitHub Link: {link}"
-        
-        enhanced_context = re.sub(issue_pattern, replace_with_link, context)
-        return enhanced_context
+    def set_target_repository(self, owner: str, name: str):
+        """Set the target repository for issue links (used when we know the correct repo)"""
+        self.target_repo_owner = owner
+        self.target_repo_name = name
 
     async def execute(self, issue_data: Dict[str, Any], 
                      comment_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -60,25 +49,22 @@ class SimilarIssuesSearchTool(BaseTool):
                 issue_title=issue_data.get('title', ''),
                 issue_body=issue_data.get('body', ''),
                 n_results=5  # Increase to 5 results for more comprehensive analysis
-            )
-              # Calculate actual result count
+            )            
+            # Calculate actual result count
             results_count = self._count_similar_results(context)
             
-            # Enhance context with clickable GitHub issue links
-            enhanced_context = self._enhance_context_with_links(context)
-            
-            # Generate intelligent usage suggestions
+            # Generate intelligent usage suggestions with LLM-generated GitHub links
             use_suggestion = await self._generate_use_suggestion(
                 issue_data=issue_data,
-                similarity_context=enhanced_context,
+                similarity_context=context,  # Pass original context, let LLM generate links
                 results_count=results_count
             )
             
             # Calculate dynamic confidence
-            confidence = self._calculate_confidence(results_count, enhanced_context)
+            confidence = self._calculate_confidence(results_count, context)
             
             return {
-                "context": enhanced_context,
+                "context": context,  # Return original context
                 "results_count": results_count,
                 "is_successful": 1 if results_count > 0 else 0,
                 "confidence": confidence,
@@ -133,51 +119,68 @@ class SimilarIssuesSearchTool(BaseTool):
             
         except Exception as e:
             self.logger.warning(f"Failed to generate intelligent use suggestion: {e}")
-            # Fallback processing: generate basic suggestions based on rules
-            return self._generate_fallback_suggestion(similarity_context, results_count)
+            # Fallback processing: generate basic suggestions based on rules            return self._generate_fallback_suggestion(similarity_context, results_count)
+    
     def _build_analysis_prompt(self, issue_data: Dict[str, Any], similarity_context: str, results_count: int) -> str:
-        """Build LLM analysis prompt for similarity search results"""
+        """Build LLM analysis prompt for similarity search results with intelligent GitHub link generation"""
+        
+        # Extract issue numbers from context for LLM to generate links
+        import re
+        issue_numbers = re.findall(r'Issue: #(\d+)', similarity_context)
+        issue_list = ", ".join(issue_numbers) if issue_numbers else "none found"
+        
         return f"""
-You are an expert technical assistant analyzing similar issue search results to provide actionable insights for GitHub issue resolution.
+You are an expert technical assistant analyzing similar GitHub issues to provide actionable insights.
 
-**Current Issue:**
+🔗 **CRITICAL LINK GENERATION REQUIREMENT** 🔗
+FOR EVERY ISSUE NUMBER you mention, you MUST generate the full GitHub link:
+- Format: https://github.com/OfficeDev/office-js/issues/[NUMBER]
+- Example: Issue #5742 → https://github.com/OfficeDev/office-js/issues/5742
+- NO EXCEPTIONS: Every issue reference must include its clickable GitHub link
+
+**CURRENT ISSUE BEING ANALYZED:**
 Title: {issue_data.get('title', 'N/A')}
 Body: {issue_data.get('body', 'N/A')[:800]}{'...' if len(issue_data.get('body', '')) > 800 else ''}
 
-**Similar Issues Search Results ({results_count} similar issues found):**
+**SIMILAR ISSUES FOUND ({results_count} matches):**
 {similarity_context[:3000]}{'...' if len(similarity_context) > 3000 else ''}
 
-**Your Task:**
-Analyze the similar issues and provide structured, actionable suggestions. Focus on:
+**DETECTED ISSUE NUMBERS TO LINK**: {issue_list}
 
-1. **Pattern Recognition**: Identify common patterns between the current issue and similar historical cases
-2. **Solution Extraction**: Extract concrete solutions, workarounds, or fixes that worked in similar cases
-3. **Risk Assessment**: Note any pitfalls, failed approaches, or warnings from similar past cases
-4. **Actionable Guidance**: Provide specific, implementable recommendations based on similar issue resolutions
-5. **Reference Links**: ALWAYS include the GitHub links provided in the similarity results when referencing specific issues
+**YOUR ANALYSIS MISSION:**
+Extract maximum actionable value from these similar issues. Focus on:
+✅ **Solutions & Fixes**: What worked in similar cases?
+✅ **Workarounds**: Temporary fixes that helped users?
+✅ **Common Patterns**: Why do these issues occur?
+✅ **Implementation Steps**: Concrete actions to take
+✅ **Pitfalls to Avoid**: What didn't work or caused problems?
+5. **Link Integration**: Seamlessly integrate GitHub links into your explanations
 
-**Response Format (JSON only):**
+**RESPONSE FORMAT (JSON REQUIRED):**
 {{
-    "summary": "1-2 sentence summary of what similar issues were found and their general characteristics",
-    "relevance": "high|medium|low - assess how closely related the similar cases are to current issue",
+    "summary": "Brief overview of similar issues found and their key characteristics",
+    "relevance": "high|medium|low",
     "actionable_insights": [
-        "Specific insight 1 with concrete details from similar cases including GitHub link references",
-        "Specific insight 2 with actionable guidance from past resolutions including GitHub link references", 
-        "Specific insight 3 with implementation steps based on similar issues including GitHub link references"
+        "💡 Insight with specific solution details. Reference: Issue #[NUM] (https://github.com/OfficeDev/office-js/issues/[NUM])",
+        "💡 Implementation step from similar case. Reference: Issue #[NUM] (https://github.com/OfficeDev/office-js/issues/[NUM])",
+        "💡 Important warning or pitfall to avoid. Reference: Issue #[NUM] (https://github.com/OfficeDev/office-js/issues/[NUM])"
     ],
-    "recommended_approach": "Detailed, step-by-step recommendation based on successful similar issue resolutions, include GitHub links where relevant",
-    "user_friendly_summary": "A clear, jargon-free explanation for end users about what similar cases were found and what they suggest, including links to relevant issues for further reading"
+    "recommended_approach": "Step-by-step recommendation based on successful patterns from similar issues. Include GitHub links for referenced issues: https://github.com/OfficeDev/office-js/issues/[NUM]",
+    "user_friendly_summary": "Clear explanation for end users about what similar cases suggest, with clickable links to explore: https://github.com/OfficeDev/office-js/issues/[NUM]"
 }}
 
-**Guidelines:**
-- Be specific and actionable, not generic
-- Extract actual solutions/code/commands from similar issues when available
-- **ALWAYS** include GitHub links when referring to specific similar issues
-- Reference issue numbers along with their GitHub links for easy navigation
-- Focus on proven solutions from the similar issue data
-- Keep user_friendly_summary accessible to non-technical users
-- Emphasize the similarity patterns and how they apply to the current issue
-- When mentioning similar issues, format as: "Issue #123 (GitHub Link: https://...)"
+**LINK GENERATION EXAMPLES:**
+✅ CORRECT: "This issue matches Issue #5742 (https://github.com/OfficeDev/office-js/issues/5742) where the solution was..."
+✅ CORRECT: "Similar to Issue #3821 (https://github.com/OfficeDev/office-js/issues/3821), try clearing the Office cache..."
+❌ WRONG: "Similar to Issue #5742..." (missing link)
+❌ WRONG: "See github.com/issues/5742" (wrong format)
+
+**QUALITY CHECKLIST:**
+✅ Every issue number has its GitHub link
+✅ Solutions are specific and actionable
+✅ User-friendly summary is accessible to non-technical users
+✅ Insights focus on practical implementation
+✅ Links use exact format: https://github.com/OfficeDev/office-js/issues/[NUMBER]
 """
     
     def _extract_response_text(self, response) -> str:

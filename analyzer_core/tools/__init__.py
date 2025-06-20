@@ -4,7 +4,7 @@ Tool implementations for issue analysis
 """
 
 from .base_tool import BaseTool
-from .rag_tool import RAGSearchTool
+from .rag_tool import RAGTool
 from .image_tool import ImageAnalysisTool
 from .regression_tool import RegressionAnalysisTool
 from .similarity_tool import SimilarIssuesSearchTool
@@ -15,7 +15,7 @@ from ..models.tool_models import AvailableTools
 def get_tool_registry():
     """Get the complete tool registry"""
     return {
-        AvailableTools.RAG_SEARCH: RAGSearchTool(),
+        AvailableTools.RAG_SEARCH: RAGTool(),
         AvailableTools.IMAGE_ANALYSIS: ImageAnalysisTool(),
         AvailableTools.REGRESSION_ANALYSIS: RegressionAnalysisTool(),
         AvailableTools.SIMILAR_ISSUES: SimilarIssuesSearchTool(),
@@ -27,7 +27,7 @@ def get_tool_registry():
 
 __all__ = [
     'BaseTool',
-    'RAGSearchTool',
+    'RAGTool',
     'ImageAnalysisTool', 
     'RegressionAnalysisTool',
     'SimilarIssuesSearchTool',

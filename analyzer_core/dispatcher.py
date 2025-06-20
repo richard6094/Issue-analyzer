@@ -116,7 +116,6 @@ class IntelligentDispatcher:
             logger.error(f"Strategy-driven analysis error: {str(e)}")
             self.analysis_context.error = str(e)
             return self._convert_context_to_dict()
-    
     async def _execute_tools(self, tools: List[AvailableTools], 
                            issue_data: Dict[str, Any],
                            comment_data: Optional[Dict[str, Any]]) -> List[ToolResult]:
@@ -126,7 +125,7 @@ class IntelligentDispatcher:
             tool = self.tool_registry.get(tool_enum)
             if tool:
                 try:
-                    logger.info(f"Executing tool: {tool_enum.value}")
+                    logger.info(f"Executing tool: {tool_enum.value}")                  
                     data = await tool.execute(issue_data, comment_data)
                     results.append(ToolResult(
                         tool=tool_enum,

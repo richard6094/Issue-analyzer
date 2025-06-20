@@ -1,0 +1,23 @@
+{
+  "databases": {
+    "main": {
+      "path": "D:\\AIOps\\github repos\\Issue-analyzer\\chroma_db",
+      "description": "Main issue database",
+      "collection_name": "issue_collection",
+      "registered_at": "1747393567.0183995"
+    },
+    "llm": {
+      "path": "D:\\AIOps\\github repos\\Issue-analyzer\\local_chroma_db_LLM",
+      "description": "LLM-specific database",
+      "collection_name": "llm_collection",
+      "registered_at": "1747645901.7169242"
+    },
+    "test_db": {
+      "path": "D:\\AIOps\\github repos\\Issue-analyzer\\test_chroma_db",
+      "description": "Test database for validation",
+      "collection_name": "test_collection",
+      "registered_at": "1750326817.7851698"
+    }
+  },
+  "default_database": "main"
+}
